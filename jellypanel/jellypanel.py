@@ -1,4 +1,142 @@
-import tkinter as tk
+from ast import literal_eval
+from sys import argv
+
+import socket
+import tkinter 
+import threading
+import time
+
+BODY = 'Body'
+METHOD = 'Target'
+
+#HEARTBEAT = 'Heartbeat'
+PERIOD = 'Period'
+OWNED = 'Owned'
+
+#MEET = 'Meet'
+NAME = 'Name'
+THIS = 'I am'
+ABOUT = 'About'
+ADDRESS = 'Address'
+
+#DISCOVER = 'Discover'
+CONTACTS = 'Contacts'
+
+class traffic_ship: 
+	looping = False
+	heartbeat_looping = False
+
+	contacts = {}
+	contacts_addr = {}
+	contacts_status = {}
+	contacts_sem = threading.Semaphore()
+	
+	heartbeat_sem = threading.Semaphore()
+	heartbeat_paused = False
+	heartbeat_interval = 5
+
+	delay_interval = 0.1
+
+	def __init__ (self, ip, port, name = None):
+				
+		self.addr = ip,port
+		self.name = name
+		self.sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM) # udp 
+		self.sock.bind(self.addr)
+		print('\n\t',repr(self.name),'@',self.addr)
+
+	def add_contact (self, address, name = None):
+
+		self.contacts_sem.acquire()
+		
+		if (not address in self.contacts) or (name != None and self.contacts[address] != name):
+			if name == None:
+				c = len(self.contacts)
+				a = len(self.contacts_addr)			
+				s = len(self.contacts_status)
+
+				while True:
+					name = f'unnamed host {s}{a}{c}'				
+					if not name in self.contacts_addr:
+						break
+
+					a -= 1
+					c += 1
+
+			self.contacts[address] = name
+			self.contacts_addr[address] = self.contacts_addr[name] = address					
+
+			print('Added',name,address)
+
+		self.contacts_sem.release()
+
+	def start (self):	
+		self.looping = True
+
+	def stop (self):	
+		self.looping = False
+
+	def exit (self):
+		self.stop()
+
+	def mainloop (self):	
+		threading.Thread(target=self.heartbeat_loop, daemon=True).start()
+
+
+	def heartbeat_loop (self):	 	
+		
+		self.heartbeat_start()
+		print('Start heartbeat\t',self.looping,self.heartbeat_looping)
+
+		while self.looping and self.heartbeat_looping:
+			self.heartbeat_sem.acquire() # pause 
+			self.heartbeat_sem.release()
+
+			i = self.heartbeat_interval
+			beat = {
+				PERIOD: i,
+				OWNED: {
+
+				}
+			}
+
+			self.contacts_sem.acquire()
+			for c in self.contacts:
+				print('Heartbeat to',self.contacts[c],c)				
+			self.contacts_sem.release()
+
+			if i > 0:
+				time.sleep(i)
+		print('Stop heartbeat\t',self.looping,self.heartbeat_looping)
+
+	def heartbeat_start (self):
+		self.heartbeat_looping = True
+
+	def heartbeat_stop (self):	
+		self.heartbeat_looping = False
+
+	def heartbeat_pause (self):	
+		if self.heartbeat_paused:
+			print('Heartbeat already paused')
+		else:	
+			self.heartbeat_paused = self.heartbeat_sem.acquire()
+			print('Heartbeat paused',self.heartbeat_paused)
+
+	def heartbeat_play (self):		
+		if self.heartbeat_paused:
+			self.heartbeat_paused = False
+			self.heartbeat_sem.release()
+			print('Heartbeat resumed')
+		else:	
+			print('Hearbeat already playing')
+
+	def send (self, body, to, method):
+		if self.delay_interval > 0:
+			time.sleep(self.delay_interval)
+		self.sock.sendto(repr({
+			METHOD:method.__name__, 
+			BODY:body
+		}).encode(), to)
 
 class Shape:
 	def __init__(self, canvas, shape_type, x, y, size=50, color="blue"):
@@ -65,31 +203,31 @@ def create_shape(event):
 def clear_canvas():
 	canvas.delete("all")
 
-root = tk.Tk()
+root = tkinter.Tk()
 root.title("Shapes on Canvas")
 
-canvas = tk.Canvas(root, width=400, height=400, bg="white")
+canvas = tkinter.Canvas(root, width=400, height=400, bg="white")
 canvas.pack()
 
-frame = tk.Frame(root)
+frame = tkinter.Frame(root)
 frame.pack(pady=10)
 
-label_color = tk.Label(frame, text="Color:")
+label_color = tkinter.Label(frame, text="Color:")
 label_color.grid(row=0, column=0)
-entry_color = tk.Entry(frame)
+entry_color = tkinter.Entry(frame)
 entry_color.grid(row=0, column=1)
 
-shape_var = tk.StringVar(value="Square")
-shape_label = tk.Label(frame, text="Shape:")
+shape_var = tkinter.StringVar(value="Square")
+shape_label = tkinter.Label(frame, text="Shape:")
 shape_label.grid(row=1, column=0)
-shape_option = tk.OptionMenu(frame, shape_var, "Square", "Triangle")
+shape_option = tkinter.OptionMenu(frame, shape_var, "Square", "Triangle")
 shape_option.grid(row=1, column=1)
 
-create_button = tk.Button(frame, text="Create Shape")
+create_button = tkinter.Button(frame, text="Create Shape")
 create_button.grid(row=2, columnspan=2)
 canvas.bind("<Button-1>", create_shape)
 
-clear_button = tk.Button(frame, text="Clear Canvas", command=clear_canvas)
+clear_button = tkinter.Button(frame, text="Clear Canvas", command=clear_canvas)
 clear_button.grid(row=3, columnspan=2)
 
 root.mainloop()
