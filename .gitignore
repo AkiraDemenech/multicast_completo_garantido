@@ -163,4 +163,5 @@ cython_debug/
 *.aux
 *.lof
 *.toc
+*.out
 *.synctex.gz
