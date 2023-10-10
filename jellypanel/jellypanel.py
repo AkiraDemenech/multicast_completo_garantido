@@ -82,6 +82,19 @@ class traffic_ship:
 	def mainloop (self):	
 		threading.Thread(target=self.heartbeat_loop, daemon=True).start()
 
+		threading.Thread(target=self.sock_loop, daemon=True).start()
+
+	def sock_loop (self):
+		print('Start socket recovery')
+		while self.looping:			 
+			try:
+				threading.Thread(target=self.redirect, args=self.sock.recvfrom(1024)).start()
+			except ConnectionAbortedError:	
+				print('Connection aborted')
+			except ConnectionResetError:	
+				print('Connection reset')				
+			
+		print('Stop socket recovery')	
 
 	def heartbeat_loop (self):	 	
 		
@@ -103,11 +116,15 @@ class traffic_ship:
 			self.contacts_sem.acquire()
 			for c in self.contacts:
 				print('Heartbeat to',self.contacts[c],c)				
+				self.send(beat,c,self.get_heartbeat)
 			self.contacts_sem.release()
 
 			if i > 0:
 				time.sleep(i)
 		print('Stop heartbeat\t',self.looping,self.heartbeat_looping)
+
+	def get_heartbeat (self, body, reply_to):
+		print(reply_to,body)
 
 	def heartbeat_start (self):
 		self.heartbeat_looping = True
@@ -130,6 +147,9 @@ class traffic_ship:
 		else:	
 			print('Hearbeat already playing')
 
+	def error (self, error, reply_to):
+		print('ERROR @',reply_to,'\n\t',error)
+
 	def send (self, body, to, method):
 		if self.delay_interval > 0:
 			time.sleep(self.delay_interval)
@@ -137,6 +157,34 @@ class traffic_ship:
 			METHOD:method.__name__, 
 			BODY:body
 		}).encode(), to)
+
+	def redirect (self, data, reply_to):	
+		try:
+			if type(data) == bytes:
+				data = data.decode()
+
+			if type(data) == str:	
+				data = literal_eval(data)
+
+			if METHOD in data and BODY in data:			
+				self.__getattribute__(data[METHOD])(data[BODY], reply_to=reply_to)	
+				return 	
+		except Exception as ex:
+			err = f'{type(ex).__name__}:\t{ex}'		
+		else:	
+			err = f'Malformed package body'			
+				
+		err = f'{err}\nFrom:\t{reply_to}\n\t{repr(data)}'	
+
+		print(err)		
+		self.send(err,reply_to,self.error) 								
+
+
+b = traffic_ship('localhost',65431)
+b.start()
+b.mainloop()
+
+input('\n\n\n')
 
 class Shape:
 	def __init__(self, canvas, shape_type, x, y, size=50, color="blue"):
