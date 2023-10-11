@@ -6,23 +6,29 @@ import tkinter
 import threading
 import time
 
+ID = 'Id'
 BODY = 'Body'
 METHOD = 'Target'
+ATTEMPTS = 'Tries'
+ACTIVE = 'Active'
+REPLIED = 'Replied'
 
-#HEARTBEAT = 'Heartbeat'
 PERIOD = 'Period'
 OWNED = 'Owned'
 
-#MEET = 'Meet'
 NAME = 'Name'
 THIS = 'I am'
 ABOUT = 'About'
 ADDRESS = 'Address'
 
-#DISCOVER = 'Discover'
-CONTACTS = 'Contacts'
+def msg_id (n, f, a, t = None):
+	if t is None:
+		t = time.time()
 
-class traffic_ship: 
+	return time.localtime(t)[:6] + (n, f.__name__) + a	
+
+class traffic_ship:
+	 
 	looping = False
 	heartbeat_looping = False
 
@@ -36,9 +42,15 @@ class traffic_ship:
 	heartbeat_interval = 5
 
 	delay_interval = 0.1
+	reliable_interval = 0.2
+	reliable_timeout = 3
 
-	def __init__ (self, ip, port, name = None):
 				
+	reliable_inbox = {}
+	reliable_inbox_sem = threading.Semaphore()
+
+	def __init__ (self, ip, port, name = None, password = None):
+		self.password = None		
 		self.addr = ip,port
 		self.name = name
 		self.sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM) # udp 
@@ -49,26 +61,26 @@ class traffic_ship:
 
 		self.contacts_sem.acquire()
 		
-		if (not address in self.contacts) or (name != None and self.contacts[address] != name):
-			if name == None:
+		if address not in self.contacts or (name != None and self.contacts[address] != name):
+			if name is None:
 				c = len(self.contacts)
 				a = len(self.contacts_addr)			
 				s = len(self.contacts_status)
 
 				while True:
 					name = f'unnamed host {s}{a}{c}'				
-					if not name in self.contacts_addr:
+					if name not in self.contacts_addr:
 						break
 
 					a -= 1
 					c += 1
 
 			self.contacts[address] = name
-			self.contacts_addr[address] = self.contacts_addr[name] = address					
+			self.contacts_addr[address] = address					
 
 			print('Added',name,address)
 
-		self.contacts_sem.release()
+		self.contacts_sem.release()	
 
 	def start (self):	
 		self.looping = True
@@ -76,8 +88,25 @@ class traffic_ship:
 	def stop (self):	
 		self.looping = False
 
-	def exit (self):
+	def exit (self, password = None, reply_to = None):
+		if reply_to:
+			print('Remote exit call from',reply_to)
+			if self.password != password:
+				print('Denied!')
+				return 
+			self.reliable_send(0,reply_to,self.remote_exit_sender)
 		self.stop()
+
+	def remote_exit (self, host, password = None):
+		if len(host) > 2:
+			if password is None:
+				password = host[2]
+			host = host[:2]
+
+		self.reliable_send(password, host, self.exit)
+
+	def remote_exit_sender (self, response, reply_to):	
+		print('Remote exit call to',reply_to,'responded',response)
 
 	def mainloop (self):	
 		threading.Thread(target=self.heartbeat_loop, daemon=True).start()
@@ -107,11 +136,12 @@ class traffic_ship:
 
 			i = self.heartbeat_interval
 			beat = {
-				PERIOD: i,
+				PERIOD: i,				
 				OWNED: {
 
 				}
 			}
+			
 
 			self.contacts_sem.acquire()
 			for c in self.contacts:
@@ -125,6 +155,12 @@ class traffic_ship:
 
 	def get_heartbeat (self, body, reply_to):
 		print(reply_to,body)
+		self.contacts_sem.acquire()
+		self.contacts_status[reply_to] = time.time(), body[PERIOD]		
+		self.contacts_sem.release()
+
+		if reply_to not in self.contacts_addr:
+			self.send_meet(reply_to)
 
 	def heartbeat_start (self):
 		self.heartbeat_looping = True
@@ -147,6 +183,130 @@ class traffic_ship:
 		else:	
 			print('Hearbeat already playing')
 
+	def meet (self, meeting, reply_to):
+		address = meeting[ADDRESS]
+		if address != self.addr: # it != talking to itself 
+			self.add_contact(address, meeting[NAME])
+
+		if meeting[THIS]: # it is the unknown host or an alias
+			about = meeting[ABOUT]
+			if about != address:
+				self.contacts_sem.acquire()	
+				self.contacts_addr[about] = address
+				if about in self.contacts: # moved
+					self.contacts.pop(about)
+				self.contacts_sem.release()
+			return 	
+
+		meeting[ADDRESS] = self.addr
+		meeting[NAME] = self.name
+		meeting[THIS] = True
+		return self.reliable_send(meeting, reply_to, self.meet)
+
+	def send_meet (self, unknown):
+		return self.reliable_send({
+				THIS: False, 
+				ABOUT: unknown, 
+				ADDRESS: self.addr, 
+				NAME:self.name
+			}, unknown, self.meet)
+	
+	def discover (self, contacts, reply_to = None):	
+		added = 0
+		for c in contacts:
+			if c not in self.contacts_addr:# and type(c) == tuple:
+				added += 1				
+
+				self.contacts_sem.acquire()
+				self.contacts_addr[c] = c
+				self.contacts_sem.release()
+
+				self.send_meet(c)
+		print('Added',added,'contact' + ('s' * (added != 1)))		
+
+		if reply_to != None and not added:		
+			self.contacts_sem.acquire()
+			for c in self.contacts_addr:
+				if c not in contacts:
+					added = True
+					break						
+			else:	
+				print('0 new contacts to introduce')
+			self.contacts_sem.release()	
+
+		if added:
+			for c in (self.contacts):
+				self.send_discover(c)
+				
+				
+	def send_discover (self, to, contacts = None):			 
+		return self.reliable_send(list(self.contacts_addr if contacts is None else contacts), to, self.discover)
+
+	def reliable_send (self, body, to, method, callback = None):				
+
+		self.reliable_inbox_sem.acquire()
+		id = msg_id(len(self.reliable_inbox), self.reliable_send, self.addr)	
+		sem = threading.Semaphore()
+		msg = {
+			BODY:body, METHOD:method.__name__, 
+			ATTEMPTS:True, REPLIED: False, ID:id
+		}		
+		self.reliable_inbox[id] = msg, sem
+		self.reliable_inbox_sem.release()
+
+		sem.acquire()
+		msg[ACTIVE] = self.reliable_timeout
+		t = time.time() + self.reliable_timeout
+		while time.time() <= t:
+			self.send(msg, to, self.reliable_redirect)
+
+			if self.reliable_interval > 0:
+				time.sleep(self.reliable_interval)
+
+			if sem.acquire(blocking=False):
+				sem.release()
+				msg[REPLIED] = True
+				break
+
+			msg[ATTEMPTS] += 1
+		msg[ACTIVE] = t	
+
+		if callback != None:
+			callback(msg)
+		return msg	
+
+	def reliable_redirect (self, data, reply_to):	
+
+		id = data[ID]
+		first = False
+		self.reliable_inbox_sem.acquire()
+		if id not in self.reliable_inbox:
+			self.reliable_inbox[id] = data
+			data[ACTIVE] += time.time()
+			first = True
+		elif type(self.reliable_inbox[id]) == tuple:				
+			sem = self.reliable_inbox[id][1]
+			first = not sem.acquire(blocking=False)								
+			sem.release()			
+		self.reliable_inbox_sem.release()
+
+		if first:
+			threading.Thread(target=self.redirect, args=(data, reply_to)).start()
+		
+		self.send(id, reply_to, self.reliable_sender)	
+
+	def reliable_sender (self, id, reply_to):	
+		self.reliable_inbox_sem.acquire()
+		sem = self.reliable_inbox[id][1]
+		self.reliable_inbox_sem.release()
+
+		sem.acquire(blocking=False)
+		sem.release()
+		
+		
+		
+		
+
 	def error (self, error, reply_to):
 		print('ERROR @',reply_to,'\n\t',error)
 
@@ -164,11 +324,15 @@ class traffic_ship:
 				data = data.decode()
 
 			if type(data) == str:	
-				data = literal_eval(data)
+				data = literal_eval(data)				
 
-			if METHOD in data and BODY in data:			
-				self.__getattribute__(data[METHOD])(data[BODY], reply_to=reply_to)	
-				return 	
+			if type(data) == dict:			
+				if METHOD in data and BODY in data:
+					self.__getattribute__(data[METHOD])(data[BODY], reply_to=reply_to)	
+					return 	
+			for d in data:
+				self.redirect(d,reply_to)
+
 		except Exception as ex:
 			err = f'{type(ex).__name__}:\t{ex}'		
 		else:	
@@ -179,10 +343,16 @@ class traffic_ship:
 		print(err)		
 		self.send(err,reply_to,self.error) 								
 
+a = traffic_ship('localhost',65432)		
+a.start()
+a.mainloop()
+
 
 b = traffic_ship('localhost',65431)
 b.start()
 b.mainloop()
+
+b.add_contact(('localhost',65432))
 
 input('\n\n\n')
 
