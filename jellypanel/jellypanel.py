@@ -4,6 +4,7 @@ from sys import argv
 import socket
 import tkinter 
 import threading
+import traceback
 import time
 
 ID = 'Id'
@@ -145,7 +146,7 @@ class traffic_ship:
 
 			self.contacts_sem.acquire()
 			for c in self.contacts:
-				print('Heartbeat to',self.contacts[c],c)				
+			#	print('Heartbeat to',self.contacts[c],c)				
 				self.send(beat,c,self.get_heartbeat)
 			self.contacts_sem.release()
 
@@ -154,7 +155,7 @@ class traffic_ship:
 		print('Stop heartbeat\t',self.looping,self.heartbeat_looping)
 
 	def get_heartbeat (self, body, reply_to):
-		print(reply_to,body)
+	#	print(reply_to,body)
 		self.contacts_sem.acquire()
 		self.contacts_status[reply_to] = time.time(), body[PERIOD]		
 		self.contacts_sem.release()
@@ -196,7 +197,7 @@ class traffic_ship:
 				if about in self.contacts: # moved
 					self.contacts.pop(about)
 				self.contacts_sem.release()
-			return 	
+			return self.send_discover(reply_to)	
 
 		meeting[ADDRESS] = self.addr
 		meeting[NAME] = self.name
@@ -212,6 +213,7 @@ class traffic_ship:
 			}, unknown, self.meet)
 	
 	def discover (self, contacts, reply_to = None):	
+		print(*time.localtime()[:6])
 		added = 0
 		for c in contacts:
 			if c not in self.contacts_addr:# and type(c) == tuple:
@@ -235,7 +237,8 @@ class traffic_ship:
 			self.contacts_sem.release()	
 
 		if added:
-			for c in (self.contacts):
+			print('Sending discover\n')
+			for c in self.contacts:
 				self.send_discover(c)
 				
 				
@@ -335,6 +338,7 @@ class traffic_ship:
 
 		except Exception as ex:
 			err = f'{type(ex).__name__}:\t{ex}'		
+			traceback.print_tb(ex.__traceback__)
 		else:	
 			err = f'Malformed package body'			
 				
@@ -348,13 +352,8 @@ a.start()
 a.mainloop()
 
 
-b = traffic_ship('localhost',65431)
-b.start()
-b.mainloop()
 
-b.add_contact(('localhost',65432))
 
-input('\n\n\n')
 
 class Shape:
 	def __init__(self, canvas, shape_type, x, y, size=50, color="blue"):
