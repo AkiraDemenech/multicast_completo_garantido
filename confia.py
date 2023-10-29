@@ -242,19 +242,40 @@ class multicast:
 
 		self.contacts_sem.acquire()
 		if addr in self.contacts_status:
-			last,expected = self.contacts_status[addr]	
 			
-			s = f'last seen {now - last}s ago, expected to '
-			if expected <= last:
-				s += 'never pulse again (declared heartbeat deactivation)'
-			elif expected < now:
-				s += f'have pulsed {now - expected}s ago'
+			last,expected,delete_after,interval,timeout_interval = self.contacts_status[addr]	
+			if last < 0:
+				s = 'never sent any heartbeats'
 			else:	
-				s += f'pulse again in {expected - now}s'
+			
+				s = f'last seen {now - last}s ago, expected to '
+				if expected <= last:
+					s += 'never pulse again (declared heartbeat deactivation)'
+				elif expected < now:
+					s += f'have pulsed {now - expected}s ago'
+				else:	
+					s += f'pulse again in {expected - now}s'
 		else:				
-			s = 'never sent any heartbeats'
+			s = 'unknown'
 		self.contacts_sem.release()
 		return s
+
+	def status_review (self): # contacts_sem ()		
+
+		self.contacts_sem.acquire()
+		#print('Reviewing contacts status')
+		for addr in self.contacts_status:	
+			ti, tf, to, dt, dto = self.contacts_status[addr]	
+
+			if to < time.time():
+				#self.status(addr)				
+				if addr in self.contacts:
+					self.contacts.pop(addr)
+					print(addr,'removed!\n')		
+		self.contacts_sem.release()
+
+			
+		  		
 
 	def add_contact (self, addr, name = None): # contacts_sem ()
 		'''To add a new address.
@@ -293,6 +314,7 @@ class multicast:
 		if addr != self.addr:			
 			self.contacts[addr] = name	
 			self.contacts_addr[name] = self.contacts_addr[addr] = addr		
+			self.contacts_status[addr] = -1,-1,time.time() + self.reliable_timeout, -1,-1
 			print('Added',addr,'as',repr(name))
 		self.contacts_sem.release()
 		
@@ -304,7 +326,7 @@ class multicast:
 
 		for c in contacts:
 			self.contacts_sem.acquire()
-			if c != self.addr and not c in self.contacts:
+			if c != self.addr and not c in self.contacts_status:
 				threading.Thread(target=self.add_contact, args=[c]).start()
 				added += 1
 			self.contacts_sem.release()
@@ -380,9 +402,25 @@ class multicast:
 		t = time.time()	
 		if FROM in beat:		
 			reply_to = beat[FROM]
+			
+		self.contacts_sem.acquire()						
+		if reply_to in self.contacts_status:	
+			ti, tf, to, dt, dto = self.contacts_status[reply_to]			
+			d = tf - ti
+
+			dt = t - ti
+			if dt < d: 
+				dt = d			 	
+			
+			dto = 2 * dt
+			
+		else:	
+			dto = self.reliable_timeout
+			dt = beat[HEARTBEAT]
+			
 		
-		self.contacts_sem.acquire()					
-		self.contacts_status[reply_to] = t, t + beat[HEARTBEAT] 	
+		
+		self.contacts_status[reply_to] = t, t + beat[HEARTBEAT], t + dto, dt, dto 	
 		
 		if (not reply_to in self.contacts) or self.contacts[reply_to] != beat[NAME] or DISCOVER in beat:		
 			threading.Thread(target=self.reliable_send, args=([c for c in self.contacts if c != reply_to], reply_to, self.meet_contacts)).start()
@@ -415,6 +453,8 @@ class multicast:
 		while i and self.looping: # heartbeat active 			
 			self.heartbeat_pause_sem.acquire() # wait 
 			self.heartbeat_pause_sem.release()
+			t = time.time()
+			#print('Heartbeating!')
 
 			#self.heartbeat_interval_sem.acquire()				
 			i = self.heartbeat_interval
@@ -425,6 +465,8 @@ class multicast:
 			if self.discover or random.random() <= self.discover_probability:				
 				beat[DISCOVER] = self.discover
 				self.discover = False
+				
+				
 
 			self.contacts_sem.acquire()				
 			for con in self.contacts:
@@ -433,7 +475,8 @@ class multicast:
 			#	print('Sending heartbeat to',self.contact_name(con))
 			self.contacts_sem.release()	
 
-			time.sleep(i)			
+			threading.Thread(target=self.status_review).start()
+			time.sleep(i + t - time.time())			
 			
 		print('Stop heartbeat')		
 
