@@ -5,13 +5,14 @@ import socket
 import random
 import threading
 import time
-import math
+
 
 ID = 'Id'
 TO = 'To'
 FROM = 'From'
 RETRANS = 'Retransmissions'
 RESPONSE = 'Return'
+RECURSIVE = 'Rec'
 
 METHOD = 'Target'
 BODY = 'Body'
@@ -271,7 +272,7 @@ class multicast:
 				#self.status(addr)				
 				if addr in self.contacts:
 					self.contacts.pop(addr)
-					print(addr,'removed!\n')		
+					print(self.contact_name(addr),'removed!\n')		
 		self.contacts_sem.release()
 
 			
@@ -314,7 +315,7 @@ class multicast:
 		if addr != self.addr:			
 			self.contacts[addr] = name	
 			self.contacts_addr[name] = self.contacts_addr[addr] = addr		
-			self.contacts_status[addr] = -1,-1,time.time() + self.reliable_timeout, -1,-1
+			self.contacts_status[addr] = -1,-1,time.time() + self.reliable_timeout, self.heartbeat_interval,self.reliable_timeout
 			print('Added',addr,'as',repr(name))
 		self.contacts_sem.release()
 		
@@ -413,6 +414,7 @@ class multicast:
 				dt = d			 	
 			
 			dto = 2 * dt
+			
 			
 		else:	
 			dto = self.reliable_timeout
@@ -699,23 +701,34 @@ class multicast:
 		print('\nRetransmission interval:\t',self.reliable_interval,'\nTimeout:\t',self.reliable_timeout)			
 
 
-	def row_multicast (self, msg): # inbox_sem ( contacts_sem () )
+	def row_multicast (self, msg, recursive = None, reply_to = None): # inbox_sem ( contacts_sem () )
 		'''To send the message just for some of the contacts and wait for row confirmations'''
 		self.inbox_sem.acquire()
 
+		if type(recursive) != list or not recursive:
+			receivers = self.contacts
+			pack_id = package_id(len(self.inbox) + random.random(), self.addr, self.name, self.row_multicast)
+			msg = {ID:pack_id, BODY:msg, REDUND:self.redundancy, RESPONSE:{}, RECURSIVE:recursive}
+		msg[FROM] = self.addr	
+		
 		self.contacts_sem.acquire()		
-		rec = list(self.contacts)
+		rec = [(self.contacts_status[r][-1], r) if r in self.contacts_status else (self.reliable_timeout, r) for r in receivers if r != self.addr]
 		self.contacts_sem.release()
 
 		
-		group_size = math.ceil(len(rec) / self.max_rows)
-		to = []
-		while len(rec):
-			to.append(rec[:group_size])
-			rec = rec[group_size:]
+		rec.sort()
+		rec = [r[-1] for r in rec]
 
-		pack_id = package_id(len(self.inbox) + random.random(), self.addr, self.name, self.row_multicast)
-		msgs = [({ID:pack_id, TO:r, FROM:self.addr, BODY:msg, ROWS:self.max_rows, REDUND:self.redundancy, RESPONSE:{}}, threading.Semaphore()) for r in to if len(r)]					
+		to = [[] for r in range(self.max_rows)]
+		while len(rec):
+			to[len(rec) % len(to)].append(rec.pop(0))
+			
+		msgs = []	
+		for r in to:
+			if len(r):
+				m = dict(msg)
+				m[TO] = r
+				msgs.append((m, threading.Semaphore()))					
 		
 		sem = threading.Semaphore()
 		sem.acquire()
@@ -729,8 +742,12 @@ class multicast:
 			threading.Thread(target=self.row_multicast_send, args=[m,s]).start()
 			
 
-		ft = self.reliable_timeout * group_size
+		ft = self.reliable_timeout * max(len(t) for t in to)
 		a = sem.acquire(timeout=ft)	# full row timeout 
+		if type(recursive) == list:
+			# response to parent host
+				
+			return 
 		print('Full row confirmation timeout' * (not a))
 
 		receivers = []
