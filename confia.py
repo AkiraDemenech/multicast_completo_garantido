@@ -10,6 +10,7 @@ import time
 ID = 'Id'
 TO = 'To'
 FROM = 'From'
+MAILER = 'Consignor'
 RETRANS = 'Retransmissions'
 RESPONSE = 'Return'
 RECURSIVE = 'Rec'
@@ -31,8 +32,8 @@ DISCOVER_PROBABILITY = 1/12
 
 ROWS = 'Rows'
 REDUND = 'Redundancy'
-MAX_ROWS = 1#3
-REDUNDANCY = 1#2
+MAX_ROWS = 2
+REDUNDANCY = 2
 
 MAX_SIZE = 1280
 CONTACTS = {}
@@ -167,6 +168,7 @@ class multicast:
 
 		self.direct = self.direct_multicast
 		self.row = self.multicast = self.row_multicast
+		self.tree = self.recursive = self.recursive_row = self.recursive_row_multicast = self.recursive_multicast = self.tree_multicast
 
 		self.rename = self.set_name
 		self.heart = self.beat = self.heartbeat = self.set_heartbeat
@@ -180,6 +182,7 @@ class multicast:
 		self.commands = [
 			self.direct,
 			self.row,
+			self.tree,
 
 			self.add,
 			self.rename,
@@ -271,8 +274,9 @@ class multicast:
 			if to < time.time():
 				#self.status(addr)				
 				if addr in self.contacts:
+					print('\n',self.contact_name(addr),'removed!\n')		
 					self.contacts.pop(addr)
-					print(self.contact_name(addr),'removed!\n')		
+					
 		self.contacts_sem.release()
 
 			
@@ -478,7 +482,9 @@ class multicast:
 			self.contacts_sem.release()	
 
 			threading.Thread(target=self.status_review).start()
-			time.sleep(i + t - time.time())			
+			t -= time.time()
+			if t > -i:
+				time.sleep(i + t)			
 			
 		print('Stop heartbeat')		
 
@@ -601,11 +607,15 @@ class multicast:
 		self.reliable_inbox_sem.release()
 
 		#self.reliable_timeout_sem.acquire()
-		timeout = self.reliable_timeout + time.time()
+		timeout = self.reliable_timeout  
 		#self.reliable_timeout_sem.release()
 
-		success = None
+		if to in self.contacts_status:	
+			timeout = self.contacts_status[to][-2]
+		#	print('Timeout for',to,timeout)
 
+		success = None
+		timeout += time.time()
 		while time.time() <= timeout:
 
 			self.send(pack, to, self.reliable_receiver)	
@@ -700,15 +710,21 @@ class multicast:
 
 		print('\nRetransmission interval:\t',self.reliable_interval,'\nTimeout:\t',self.reliable_timeout)			
 
+	def tree_multicast (self, msg):
+		'''To send the message just for some of the contacts and wait for subtree confirmations'''
+		self.row_multicast(msg, True)
 
 	def row_multicast (self, msg, recursive = None, reply_to = None): # inbox_sem ( contacts_sem () )
 		'''To send the message just for some of the contacts and wait for row confirmations'''
 		self.inbox_sem.acquire()
 
-		if type(recursive) != list or not recursive:
+		if type(recursive) == list:
+			receivers = recursive
+			pack_id = msg[ID]
+		else:	
 			receivers = self.contacts
 			pack_id = package_id(len(self.inbox) + random.random(), self.addr, self.name, self.row_multicast)
-			msg = {ID:pack_id, BODY:msg, REDUND:self.redundancy, RESPONSE:{}, RECURSIVE:recursive}
+			msg = {ID:pack_id, MAILER:self.addr, BODY:msg, REDUND:self.redundancy, RESPONSE:{}, RECURSIVE:recursive}
 		msg[FROM] = self.addr	
 		
 		self.contacts_sem.acquire()		
@@ -742,25 +758,28 @@ class multicast:
 			threading.Thread(target=self.row_multicast_send, args=[m,s]).start()
 			
 
-		ft = self.reliable_timeout * max(len(t) for t in to)
+		ft = self.reliable_timeout * max(len(t) for t in to)#max(sum(self.contacts_status[h][-2] if h in self.contacts_status else self.reliable_timeout for h in t) for t in to)
+
 		a = sem.acquire(timeout=ft)	# full row timeout 
-		if type(recursive) == list:
+		if type(recursive) == list and reply_to != None:
 			# response to parent host
 				
+			self.reliable_send(msg, reply_to, self.row_multicast_sender)	
 			return 
 		print('Full row confirmation timeout' * (not a))
 
-		receivers = []
+		receivers = set()
 
 		
 		for m,s in msgs:
 			for r in m[RESPONSE]:
-				receivers.append((r,'received!' if m[RESPONSE][r] else 'failed (timeout)'))
+				receivers.add((r,'received!' if m[RESPONSE][r] else 'failed (timeout)'))
 
 		for rec in to:
 			for r in rec:
-				receivers.append((r,'failed'))	
+				receivers.add((r,'failed'))	
 		
+		receivers = list(receivers)
 
 		receivers.sort()		
 		for r,t in receivers:
@@ -856,7 +875,7 @@ class multicast:
 		
 		sem = threading.Semaphore()
 		self.inbox[msg[ID]] = msg, sem
-		print('\n',self.contact_name(msg[FROM]),f'(via {self.contact_name(reply_to)})', '\n\t', msg[BODY])						
+		print('\n',self.contact_name(msg[MAILER]),f'(via {self.contact_name(reply_to)})', '\n\t', msg[BODY])						
 
 		self.inbox_sem.release()		
 
@@ -871,7 +890,12 @@ class multicast:
 			a = msg[TO].pop(i)
 
 		msg[RESPONSE][a] = True
-		self.row_multicast_send(msg, sem, i)
+		if msg[RECURSIVE] and self.max_rows > 1 and len(msg[TO]):
+			self.row_multicast(msg, msg[TO], reply_to)
+		else:		
+			self.row_multicast_send(msg, sem, i)
+
+	#	print('Received!')	
 
 
 if CONTACTS != None:

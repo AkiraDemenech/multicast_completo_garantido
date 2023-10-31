@@ -82,6 +82,14 @@ __Pode ser adicionada qualquer quantidade de arquivos, inclusive nenhum.__
 	A quantidade de cópias por fileira pode ser alterada com set_redundancy e a quantidade máxima de fileiras pode ser alterada com set_max_rows
 		
 	A mensagem deve ser um literal válido na sintaxe Python, podendo ser string, tupla, lista, dicionário, inteiro ou ponto flutuante, por exemplo.
+	
+ - Envia uma mensagem para os pais de cada árvore e aguarda confirmações de todas elas.
+ 
+		tree "<mensagem>"	
+		
+	A quantidade de cópias por árvore pode ser alterada com set_redundancy e a quantidade máxima de árvores pode ser alterada com set_max_rows
+	
+	A mensagem deve ser um literal válido na sintaxe Python, podendo ser string, tupla, lista, dicionário, inteiro ou ponto flutuante, por exemplo.	
 
 - Adiciona um novo componente ao grupo, caso ainda não estivesse.
 
