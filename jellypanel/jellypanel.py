@@ -21,8 +21,9 @@ ADDRESS = 'Address'
 def dummy (*a, **k):
 	pass
 
-#debug = print
 debug = dummy
+#debug = print
+
 
 debug_meet = debug
 
@@ -35,6 +36,12 @@ debug_reliable_send = debug
 
 debug_activity_loop = print
 debug_heartbeat_loop = debug
+
+debug_toplevel = debug
+debug_rect_release = debug
+debug_rect_click = debug
+debug_rect_drag = debug
+debug_rect_move = debug
 
 #debug_reliable_receiver = debug_reliable_sender = print
 
@@ -56,20 +63,24 @@ class rect:
 		
 
 	def click (self, event):
+		debug_rect_click('Clicar')
 		self.is_dragging = True
 		self.x_clicked = self.x - event.x
 		self.y_clicked = self.y - event.y		
 
 	def drag (self, event):
+		debug_rect_drag('Arrastar',self.is_dragging)
 		if self.is_dragging:			
 			self.move(event.x + self.x_clicked, event.y + self.y_clicked)
 
 	def move (self, x, y):		
+		debug_rect_move(x,y)
 		self.canvas.move(self.rect, x - self.x, y - self.y)
 		self.x = x
 		self.y = y
 
 	def release	(self, event):
+		debug_rect_release('Soltar')
 		self.is_dragging = self.x_clicked = self.y_clicked = False
 		
 		
@@ -84,7 +95,7 @@ class traffic_surf:
 	server = {}	# quadros gerenciados
 	white = {}	# quadros participando
 	known = {}	# quadros conhecidos
-	display_known = []
+	display_known = {} # botões dos quadros conhecidos
 
 	current = None # quadro atual
 
@@ -157,12 +168,13 @@ class traffic_surf:
 		self.canvas_list.scrollbar = tkinter.Scrollbar(self.canvas_list.scroll_frame, orient=tkinter.VERTICAL, command=self.canvas_list.canvas.yview)
 		self.canvas_list.scrollbar.pack(side=tkinter.RIGHT, fill=tkinter.Y)
 		self.canvas_list.canvas.configure(yscrollcommand=self.canvas_list.scrollbar.set)
+		self.canvas_list.canvas.refresh = lambda event=None: debug_toplevel(event,self.canvas_list.canvas.update_idletasks(),self.canvas_list.canvas.config(scrollregion=self.canvas_list.canvas.bbox(tkinter.ALL)))
+		self.canvas_list.bind('<Configure>', self.canvas_list.canvas.refresh)
 
 		self.canvas_list.button_frame = tkinter.Frame(self.canvas_list.canvas)
 		self.canvas_list.canvas.create_window((0, 0), window=self.canvas_list.button_frame, anchor=tkinter.NW)
 
-		self.canvas_list.canvas.update_idletasks()
-		self.canvas_list.canvas.config(scrollregion=self.canvas_list.canvas.bbox('all'))
+		self.canvas_list.canvas.refresh()
 
 	def find (self):
 		print('Localizar quadros')
@@ -172,7 +184,7 @@ class traffic_surf:
 	def join (self, id):
 		print('Ingressar em quadro',id)
 		self.current = id
-		self.canvas.delete('all')
+		self.canvas.delete(tkinter.ALL)
 		self.canvas.configure(bg='white')
 
 		self.white_sem.acquire()
@@ -187,6 +199,7 @@ class traffic_surf:
 		# solicitar participação para o servidor
 		threading.Thread(target=self.reliable_send, args=[self.msg(id, address, self.join_request)]).start()
 		
+		self.update_known()
 
 	
 	def create (self):
@@ -252,19 +265,23 @@ class traffic_surf:
 		self.update_known()
 
 	def update_known (self):
-		self.white_sem.acquire()
-		for b in self.display_known:
-			b.destroy()
-		self.display_known.clear()	
+		self.white_sem.acquire()			
 
 		for k in self.known:
-			b = tkinter.Button(self.canvas_list.button_frame, text=k[:3], command=lambda q=k:self.join(q))
-			b.pack()
-			self.display_known.append(b)
+			if not k in self.display_known:
+				b = tkinter.Button(self.canvas_list.button_frame, text=k[:3], command=lambda q=k:self.join(q))
+				b.pack()
+				self.display_known[k] = b
+				print('Botão',k,'adicionado')
+				
 		self.white_sem.release()	
 
-		self.canvas_list.update()
 		
+	#	self.canvas_list.update()		
+		self.canvas_list.canvas.refresh()
+		self.canvas_list.canvas.yview_moveto(0)
+	#	self.canvas_list.canvas.update_idletasks()
+	#	print('Botões de quadros conhecidos atualizados')
 
 	def print (self, a, reply_to=None, print_f = print):
 		print_f(reply_to, '\n', a)
