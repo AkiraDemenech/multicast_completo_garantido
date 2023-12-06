@@ -64,6 +64,7 @@ class rect:
 
 	def click (self, event):
 		debug_rect_click('Clicar')
+		# pedir exclusividade do objeto para o servidor
 		self.is_dragging = True
 		self.x_clicked = self.x - event.x
 		self.y_clicked = self.y - event.y		
@@ -71,6 +72,7 @@ class rect:
 	def drag (self, event):
 		debug_rect_drag('Arrastar',self.is_dragging)
 		if self.is_dragging:			
+			# enviar nova posição para o servidor
 			self.move(event.x + self.x_clicked, event.y + self.y_clicked)
 
 	def move (self, x, y):		
@@ -81,6 +83,7 @@ class rect:
 
 	def release	(self, event):
 		debug_rect_release('Soltar')
+		# ceder a exclusividade do objeto
 		self.is_dragging = self.x_clicked = self.y_clicked = False
 		
 		
@@ -116,7 +119,7 @@ class traffic_surf:
 	root = tkinter.Tk()
 
 	looping = True
-	delay = 0.9
+	delay = 0.4
 	reliable_timeout = 2
 	reliable_interval = 0.1
 	heartbeat_interval = 5
@@ -142,11 +145,20 @@ class traffic_surf:
 		self.root.frame = tkinter.Frame(self.root)
 		self.root.frame.pack(pady=10)
 
-		self.label_color = tkinter.Label(self.root.frame, text='Cor:')
-		self.label_color.grid(row=0, column=0)
+		
 		self.entry_color = tkinter.Entry(self.root.frame)
 		self.entry_color.insert(0, '#' + hex(self.num)[2:].zfill(6))
-		self.entry_color.grid(row=0, column=1)
+		self.entry_color.grid(row=0, column=0)
+
+		self.numeric = self.root.frame.register(lambda s: (s.isdigit() or not len(s)))
+
+		self.entry_height = tkinter.Entry(self.root.frame, validate=tkinter.ALL, validatecommand=(self.numeric, '%P'))
+		self.entry_height.insert(0, str(random.randint(40,50)))
+		self.entry_height.grid(row=0, column=1)
+
+		self.entry_width = tkinter.Entry(self.root.frame, validate=tkinter.ALL, validatecommand=(self.numeric, '%P'))
+		self.entry_width.insert(0, str(random.randint(30,60)))
+		self.entry_width.grid(row=0, column=2)
 
 		self.create_button = tkinter.Button(self.root.frame, text='Criar quadro em branco', command=self.create)
 		self.create_button.grid(row=2, column=1)
@@ -231,14 +243,16 @@ class traffic_surf:
 	def create_rect (self, event):
 		if self.current == None:
 			return 
-		x = event.x
-		y = event.y
 
 			
-		if not self.canvas.find_overlapping(x, y, x, y):
-			rect('', self, x, y, 50,50, self.entry_color.get())		
 
+		if self.canvas.find_overlapping(event.x, event.y, event.x, event.y):
+			return 
 		
+		# enviar informações do novo retângulo para o servidor do quadro atual
+
+		rect('', self, event.x, event.y, int(self.entry_width.get()), int(self.entry_height.get()), self.entry_color.get())		
+
 	def move_rect (self, id, x, y):
 		print('Mover',id,'\t',x,y)
 
@@ -282,6 +296,8 @@ class traffic_surf:
 		self.canvas_list.canvas.yview_moveto(0)
 	#	self.canvas_list.canvas.update_idletasks()
 	#	print('Botões de quadros conhecidos atualizados')
+
+	 
 
 	def print (self, a, reply_to=None, print_f = print):
 		print_f(reply_to, '\n', a)
