@@ -50,23 +50,29 @@ class rect:
 		self.canvas = jellypanel.canvas				
 		self.rect = self.canvas.create_rectangle(x, y, x + width, y + height, fill=color)
 
+		self.canvas.tag_bind(self.rect, '<ButtonRelease-1>', self.release)
 		self.canvas.tag_bind(self.rect, '<ButtonPress-1>', self.click)
 		self.canvas.tag_bind(self.rect, '<B1-Motion>', self.drag)			
+		
 
 	def click (self, event):
 		self.is_dragging = True
-		self.x = event.x
-		self.y = event.y
+		self.x_clicked = self.x - event.x
+		self.y_clicked = self.y - event.y		
 
 	def drag (self, event):
 		if self.is_dragging:			
-			self.move(event.x, event.y)
+			self.move(event.x + self.x_clicked, event.y + self.y_clicked)
 
 	def move (self, x, y):		
 		self.canvas.move(self.rect, x - self.x, y - self.y)
 		self.x = x
 		self.y = y
 
+	def release	(self, event):
+		self.is_dragging = self.x_clicked = self.y_clicked = False
+		
+		
 		
 
 class traffic_surf:
@@ -210,6 +216,8 @@ class traffic_surf:
 		self.update_known()
 
 	def create_rect (self, event):
+		if self.current == None:
+			return 
 		x = event.x
 		y = event.y
 
