@@ -6,445 +6,527 @@ import tkinter
 import threading
 import traceback
 import time
+import random
 
 ID = 'Id'
 BODY = 'Body'
 METHOD = 'Target'
-ATTEMPTS = 'Tries'
-ACTIVE = 'Active'
+RECIPIENT = 'To'
 REPLIED = 'Replied'
 
-PERIOD = 'Period'
-OWNED = 'Owned'
 
 NAME = 'Name'
-THIS = 'I am'
-ABOUT = 'About'
 ADDRESS = 'Address'
 
-def msg_id (n, f, a, t = None):
-	if t is None:
-		t = time.time()
+def dummy (*a, **k):
+	pass
 
-	return time.localtime(t)[:6] + (n, f.__name__) + a	
+#debug = print
+debug = dummy
 
-class traffic_ship:
+debug_meet = debug
+
+debug_send = debug
+debug_send_loop = debug
+debug_receive_loop = debug
+debug_reliable_receiver = debug
+debug_reliable_sender = debug
+debug_reliable_send = debug
+
+debug_activity_loop = print
+debug_heartbeat_loop = debug
+
+#debug_reliable_receiver = debug_reliable_sender = print
+
+class rect:
+
+	is_dragging = False
+
+	def __init__(self, id, jellypanel, x, y, width, height, color):
+		self.x = x 
+		self.y = y
+		self.id = id
+		self.jellypanel = jellypanel
+		self.canvas = jellypanel.canvas				
+		self.rect = self.canvas.create_rectangle(x, y, x + width, y + height, fill=color)
+
+		self.canvas.tag_bind(self.rect, '<ButtonPress-1>', self.click)
+		self.canvas.tag_bind(self.rect, '<B1-Motion>', self.drag)			
+
+	def click (self, event):
+		self.is_dragging = True
+		self.x = event.x
+		self.y = event.y
+
+	def drag (self, event):
+		if self.is_dragging:			
+			self.move(event.x, event.y)
+
+	def move (self, x, y):		
+		self.canvas.move(self.rect, x - self.x, y - self.y)
+		self.x = x
+		self.y = y
+
+	def stop (self):
+		self.is_dragging = False
+
+class traffic_surf:
 	 
-	looping = False
-	heartbeat_looping = False
+	server_sem = threading.Semaphore() 
+	white_sem = threading.Semaphore()
 
-	contacts = {}
-	contacts_addr = {}
-	contacts_status = {}
-	contacts_sem = threading.Semaphore()
 	
-	heartbeat_sem = threading.Semaphore()
-	heartbeat_paused = False
-	heartbeat_interval = 5
+	server = {}	# quadros gerenciados
+	white = {}	# quadros participando
+	known = {}	# quadros conhecidos
+	display_known = []
 
-	delay_interval = 0.1
-	reliable_interval = 0.2
-	reliable_timeout = 3
+	current = None # quadro atual
 
 				
-	reliable_inbox = {}
+	inbox = {}	# mensagens recebidas 
+	outbox = []	# mensagens enviadas
+	outbox_len = threading.Semaphore(0) # quantidade de mensagens esperando 
+	outbox_sem = threading.Semaphore() 
+
+	reliable_inbox = {} 
 	reliable_inbox_sem = threading.Semaphore()
 
+	contacts = {} # nomes dos contatos ativos
+	contacts_addr = {} # endereços dos contatos
+	contacts_activity = {} # situação dos contatos 
+	contacts_sem = threading.Semaphore()
+
+	root = tkinter.Tk()
+
+	looping = True
+	delay = 0.9
+	reliable_timeout = 2
+	reliable_interval = 0.1
+	heartbeat_interval = 5
+	max_size = 1024
+
 	def __init__ (self, ip, port, name = None, password = None):
-		self.password = None		
+		self.password = password		
+		self.start = time.time()
+		self.num = random.randint(0,1<<24)
 		self.addr = ip,port
-		self.name = name
-		self.sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM) # udp 
+		self.name = f'{ip} {port} {self.num}' if name == None else name
+		self.sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM) # UDP 
 		self.sock.bind(self.addr)
 		print('\n\t',repr(self.name),'@',self.addr)
+	
+		self.root.title(self.name)
+		self.canvas = tkinter.Canvas(self.root, width=400, height=400, bg='beige')
+		self.canvas.pack()
 
-	def add_contact (self, address, name = None):
+		self.canvas.bind('<Button-1>', self.create_rect)
 
-		self.contacts_sem.acquire()
 		
-		if address not in self.contacts or (name != None and self.contacts[address] != name):
-			if name is None:
-				c = len(self.contacts)
-				a = len(self.contacts_addr)			
-				s = len(self.contacts_status)
+		self.root.frame = tkinter.Frame(self.root)
+		self.root.frame.pack(pady=10)
 
-				while True:
-					name = f'unnamed host {s}{a}{c}'				
-					if name not in self.contacts_addr:
-						break
+		self.label_color = tkinter.Label(self.root.frame, text='Cor:')
+		self.label_color.grid(row=0, column=0)
+		self.entry_color = tkinter.Entry(self.root.frame)
+		self.entry_color.insert(0, '#' + hex(self.num)[2:].zfill(6))
+		self.entry_color.grid(row=0, column=1)
 
-					a -= 1
-					c += 1
+		self.create_button = tkinter.Button(self.root.frame, text='Criar quadro em branco', command=self.create)
+		self.create_button.grid(row=2, column=1)
 
-			self.contacts[address] = name
-			self.contacts_addr[address] = address					
+		self.find_button = tkinter.Button(self.root.frame, text='Localizar quadros', command=self.find)
+		self.find_button.grid(row=2, column=2)
+		self.find_frame = tkinter.Frame(self.root.frame, bg='beige')
+		self.find_frame.grid(row=3, columnspan=2)
 
-			print('Added',name,address)
+		self.canvas_list = tkinter.Toplevel()
+		self.canvas_list.title('Jellypanels conhecidos')
 
-		self.contacts_sem.release()	
+		self.canvas_list.scroll_frame = tkinter.Frame(self.canvas_list)
+		self.canvas_list.scroll_frame.pack(fill=tkinter.BOTH, expand=True)
 
-	def start (self):	
-		self.looping = True
+		self.canvas_list.canvas = tkinter.Canvas(self.canvas_list.scroll_frame)
+		self.canvas_list.canvas.pack(side=tkinter.LEFT, fill=tkinter.BOTH, expand=True)
 
-	def stop (self):	
-		self.looping = False
+		self.canvas_list.scrollbar = tkinter.Scrollbar(self.canvas_list.scroll_frame, orient=tkinter.VERTICAL, command=self.canvas_list.canvas.yview)
+		self.canvas_list.scrollbar.pack(side=tkinter.RIGHT, fill=tkinter.Y)
+		self.canvas_list.canvas.configure(yscrollcommand=self.canvas_list.scrollbar.set)
 
-	def exit (self, password = None, reply_to = None):
-		if reply_to:
-			print('Remote exit call from',reply_to)
-			if self.password != password:
-				print('Denied!')
+		self.canvas_list.button_frame = tkinter.Frame(self.canvas_list.canvas)
+		self.canvas_list.canvas.create_window((0, 0), window=self.canvas_list.button_frame, anchor=tkinter.NW)
+
+		self.canvas_list.canvas.update_idletasks()
+		self.canvas_list.canvas.config(scrollregion=self.canvas_list.canvas.bbox('all'))
+
+	def find (self):
+		print('Localizar quadros')
+		threading.Thread(target=self.reliable_send, args=[self.msg(self.known, c, self.find_request) for c in self.contacts]).start()
+		self.update_known()
+	
+	def join (self, id):
+		print('Ingressar em quadro',id)
+		self.current = id
+		self.canvas.delete('all')
+		self.canvas.configure(bg='white')
+
+		self.white_sem.acquire()
+		if not id in self.white:
+			self.white[id] = {}
+		address = self.known[id]
+		self.white_sem.release()	
+
+		# solicitar participação para o servidor
+		threading.Thread(target=self.reliable_send, args=[self.msg(id, address, self.join_request)]).start()
+		
+
+	
+	def create (self):
+		print('Criar novo quadro em branco')
+		t = time.localtime()[:6]		
+		
+		self.server_sem.acquire()
+		c = 0
+		while True:
+			n = f'{c}{len(self.server)}{len(self.white)}{len(self.known)}'
+			for m in self.server:
+				if m[0] == n:	
+					break
+			else:		
+				break
+			c += 1	
+		
+		n = (n,) + self.addr + t
+		self.server[n] = {}, set()
+		self.server_sem.release()
+
+		self.white_sem.acquire()
+		self.known[n] = self.addr
+		self.white_sem.release()
+		
+		self.join(n)	
+
+	def create_rect (self, event):
+		x = event.x
+		y = event.y
+
+			
+		if not self.canvas.find_overlapping(x, y, x, y):
+			rect('', self, x, y, 50,50, self.entry_color.get())		
+
+		
+	def move_rect (self, id, x, y):
+		print('Mover',id,'\t',x,y)
+
+	def join_request (self, id, client):	
+		print(client,'pediu para participar de',id)
+
+		self.server_sem.acquire()
+		self.server[id][-1].add(client)
+		self.server_sem.release()
+
+			
+	def find_request (self, known, client):
+		print(client,'quer conhecer mais quadros')
+		self.reliable_send(self.msg(self.known, client, self.find_response))	
+		self.find_response(known, client)
+		
+	def find_response (self, known, client):
+		self.white_sem.acquire()
+		self.known.update(known)
+		print('Quadros conhecidos:\t',self.known)
+		self.white_sem.release()
+		self.update_known()
+
+	def update_known (self):
+		self.white_sem.acquire()
+		for b in self.display_known:
+			b.destroy()
+		self.display_known.clear()	
+
+		for k in self.known:
+			b = tkinter.Button(self.canvas_list.button_frame, text=k[:3], command=lambda q=k:self.join(q))
+			b.pack()
+			self.display_known.append(b)
+		self.white_sem.release()	
+
+		self.canvas_list.update()
+		
+
+	def print (self, a, reply_to=None, print_f = print):
+		print_f(reply_to, '\n', a)
+
+	def meet (self, contact, address = None):
+		debug_meet('Conhecendo', contact, address)				
+		
+		if address != None:
+			if contact[ADDRESS] == self.addr:	
 				return 
-			self.reliable_send(0,reply_to,self.remote_exit_sender)
-		self.stop()
-
-	def remote_exit (self, host, password = None):
-		if len(host) > 2:
-			if password is None:
-				password = host[2]
-			host = host[:2]
-
-		self.reliable_send(password, host, self.exit)
-
-	def remote_exit_sender (self, response, reply_to):	
-		print('Remote exit call to',reply_to,'responded',response)
-
-	def mainloop (self):	
-		threading.Thread(target=self.heartbeat_loop, daemon=True).start()
-
-		threading.Thread(target=self.sock_loop, daemon=True).start()
-
-	def sock_loop (self):
-		print('Start socket recovery')
-		while self.looping:			 
-			try:
-				threading.Thread(target=self.redirect, args=self.sock.recvfrom(1024)).start()
-			except ConnectionAbortedError:	
-				print('Connection aborted')
-			except ConnectionResetError:	
-				print('Connection reset')				
-			
-		print('Stop socket recovery')	
-
-	def heartbeat_loop (self):	 	
-		
-		self.heartbeat_start()
-		print('Start heartbeat\t',self.looping,self.heartbeat_looping)
-
-		while self.looping and self.heartbeat_looping:
-			self.heartbeat_sem.acquire() # pause 
-			self.heartbeat_sem.release()
-
-			i = self.heartbeat_interval
-			beat = {
-				PERIOD: i,				
-				OWNED: {
-
-				}
-			}
-			
 
 			self.contacts_sem.acquire()
-			for c in self.contacts:
-			#	print('Heartbeat to',self.contacts[c],c)				
-				self.send(beat,c,self.get_heartbeat)
+			self.contacts_addr[address] = self.contacts_addr[contact[ADDRESS]] = contact[ADDRESS]
+			self.contacts[contact[ADDRESS]] = contact[NAME]
+			for c in contact[BODY]:
+				if not c in self.contacts:
+					threading.Thread(target=self.meet, args=[c]).start()					
 			self.contacts_sem.release()
 
-			if i > 0:
-				time.sleep(i)
-		print('Stop heartbeat\t',self.looping,self.heartbeat_looping)
 
-	def get_heartbeat (self, body, reply_to):
-	#	print(reply_to,body)
+			if contact[REPLIED]:
+				return 
+			contact = address	
+
+		self.reliable_send(self.msg({
+			NAME: self.name,
+			ADDRESS: self.addr,
+			REPLIED: address,			
+			BODY: list(self.contacts)
+		}, contact, self.meet))		
+
+
+
+
+	def heartbeat_listener (self, interval, address):
+		t = time.time()
+		
+		expected = t + interval
+		
 		self.contacts_sem.acquire()
-		self.contacts_status[reply_to] = time.time(), body[PERIOD]		
+		if address in self.contacts_activity:
+			dt = max(interval, t - self.contacts_activity[address][1])
+		else:	
+
+
+
+
+	
+			dt = interval
+			threading.Thread(target=self.meet, args=[address]).start()
+
+		self.contacts_activity[address] = dt, t, expected, expected + dt # dt[0] t[1] timeout[-1]	
 		self.contacts_sem.release()
 
-		if reply_to not in self.contacts_addr:
-			self.send_meet(reply_to)
+	def heartbeat_loop (self):
 
-	def heartbeat_start (self):
-		self.heartbeat_looping = True
+		while self.looping:
+			debug_heartbeat_loop('Coração batendo')
 
-	def heartbeat_stop (self):	
-		self.heartbeat_looping = False
+				
+				
+			self.send(*[self.msg(self.heartbeat_interval, a, self.heartbeat_listener) for a in self.contacts])
+			
+			time.sleep(self.heartbeat_interval)
 
-	def heartbeat_pause (self):	
-		if self.heartbeat_paused:
-			print('Heartbeat already paused')
-		else:	
-			self.heartbeat_paused = self.heartbeat_sem.acquire()
-			print('Heartbeat paused',self.heartbeat_paused)
-
-	def heartbeat_play (self):		
-		if self.heartbeat_paused:
-			self.heartbeat_paused = False
-			self.heartbeat_sem.release()
-			print('Heartbeat resumed')
-		else:	
-			print('Hearbeat already playing')
-
-	def meet (self, meeting, reply_to):
-		address = meeting[ADDRESS]
-		if address != self.addr: # it != talking to itself 
-			self.add_contact(address, meeting[NAME])
-
-		if meeting[THIS]: # it is the unknown host or an alias
-			about = meeting[ABOUT]
-			if about != address:
-				self.contacts_sem.acquire()	
-				self.contacts_addr[about] = address
-				if about in self.contacts: # moved
-					self.contacts.pop(about)
-				self.contacts_sem.release()
-			return self.send_discover(reply_to)	
-
-		meeting[ADDRESS] = self.addr
-		meeting[NAME] = self.name
-		meeting[THIS] = True
-		return self.reliable_send(meeting, reply_to, self.meet)
-
-	def send_meet (self, unknown):
-		return self.reliable_send({
-				THIS: False, 
-				ABOUT: unknown, 
-				ADDRESS: self.addr, 
-				NAME:self.name
-			}, unknown, self.meet)
-	
-	def discover (self, contacts, reply_to = None):	
-		print(*time.localtime()[:6])
-		added = 0
-		for c in contacts:
-			if c not in self.contacts_addr:# and type(c) == tuple:
-				added += 1				
-
-				self.contacts_sem.acquire()
-				self.contacts_addr[c] = c
-				self.contacts_sem.release()
-
-				self.send_meet(c)
-		print('Added',added,'contact' + ('s' * (added != 1)))		
-
-		if reply_to != None and not added:		
+	def activity_loop (self):
+		while self.looping:
 			self.contacts_sem.acquire()
-			for c in self.contacts_addr:
-				if c not in contacts:
-					added = True
-					break						
-			else:	
-				print('0 new contacts to introduce')
+			for address in list(self.contacts_activity):
+				if time.time() >= self.contacts_activity[address][-1]:
+					debug_activity_loop(address,'caiu')
+					self.contacts_activity.pop(address)
+					
+					address = self.contacts_addr[address]
+					if address in self.contacts:
+						self.contacts.pop(address)
+
+						
+
 			self.contacts_sem.release()	
 
-		if added:
-			print('Sending discover\n')
-			for c in self.contacts:
-				self.send_discover(c)
-				
-				
-	def send_discover (self, to, contacts = None):			 
-		return self.reliable_send(list(self.contacts_addr if contacts is None else contacts), to, self.discover)
+			time.sleep(self.heartbeat_interval)
 
-	def reliable_send (self, body, to, method, callback = None):				
+	def mainloop (self): 
+		threading.Thread(target=self.send_loop,daemon=True).start()
+		threading.Thread(target=self.receive_loop,daemon=True).start()
+		threading.Thread(target=self.activity_loop,daemon=True).start()
+		threading.Thread(target=self.heartbeat_loop,daemon=True).start()
+		self.root.mainloop()
+	
 
+	def receive_loop (self):
+		while self.looping:
+			debug_receive_loop('Aguardando recebimentos')
+
+			try:
+				pack, addr = self.sock.recvfrom(self.max_size)				
+
+				data = None
+				data = literal_eval(pack.decode())
+				
+				body, method = self.redirect(data)
+			except ConnectionResetError as conn_reset:
+				debug_receive_loop(conn_reset)
+				continue
+			except:	
+				debug_receive_loop('Erro de decodificação dos dados\t',pack,'\n',repr(data))
+				continue
+
+			debug_receive_loop(addr, '\t', method, '\n', body)
+			threading.Thread(args=(body, addr), target=method).start()		
+
+		
+			
+
+	def send_loop (self): # consumidor de mensagens 		
+
+		
+		
+		
+		
+		while self.looping:
+			debug_send_loop('Aguardando mensagens')
+			self.outbox_len.acquire()
+			debug_send_loop('Aguardando para enviar')
+			self.outbox_sem.acquire()
+			debug_send_loop('Enviando....')
+
+
+
+
+
+
+				
+			t = time.time()
+
+			c = self.outbox_len._value
+			while c >= 0:
+				if self.outbox[c][0] <= t:
+					debug_send_loop(c,'\t',self.outbox[c][1])
+					m = self.outbox.pop(c)[1]
+					self.sock.sendto(repr(m).encode(), m[RECIPIENT]) # tempo, destinatário, mensagem										
+				c -= 1	
+
+			d = len(self.outbox) - self.outbox_len._value  
+			while d < 0: # se o contador estiver maior do que deveria
+				d += 1
+				if not self.outbox_len.acquire(blocking=False):
+					break 
+			else:
+				if d > 0: # se o contador estiver menor do que deveria
+					self.outbox_len.release(d)	
+
+
+			self.outbox_sem.release()
+	
+	def send (self, *msgs):
+		if not len(msgs):
+			return 				 
+
+		t = time.time() + self.delay 		
+		debug_send('Aguardando fila')
+		self.outbox_sem.acquire()
+		debug_send('Adicionando mensagens para envio....')
+		for msg in msgs:
+			self.outbox.append((t,msg))
+		self.outbox_len.release(len(msgs))			
+		self.outbox_sem.release()	
+
+	def reliable_send (self, *msgs):
+		
+
+		meta_msgs = []		
 		self.reliable_inbox_sem.acquire()
-		id = msg_id(len(self.reliable_inbox), self.reliable_send, self.addr)	
-		sem = threading.Semaphore()
-		msg = {
-			BODY:body, METHOD:method.__name__, 
-			ATTEMPTS:True, REPLIED: False, ID:id
-		}		
-		self.reliable_inbox[id] = msg, sem
+		for m in msgs:
+			msg_id = m[ID] = self.msg_id(len(self.reliable_inbox), self.reliable_receiver, m[RECIPIENT])			
+			m = self.reliable_inbox[msg_id] = self.msg(m, m[RECIPIENT], self.reliable_receiver)									
+			meta_msgs.append(m)			
+			m[REPLIED] = False			
+		self.reliable_inbox_sem.release()	
+
+
+		timeout = time.time() + self.reliable_timeout
+
+		while time.time() <= timeout:
+			self.send(*meta_msgs)	
+			time.sleep(self.reliable_interval)
+
+			if sum(m[REPLIED] for m in meta_msgs) == len(meta_msgs):
+				debug_reliable_send('Sucesso!')
+				return True		
+		return False
+
+
+	def reliable_sender (self, msg_id, receiver):
+
+
+
+		self.reliable_inbox_sem.acquire()				
+		if msg_id in self.reliable_inbox:
+			self.reliable_inbox[msg_id][REPLIED] = True
+		debug_reliable_sender(msg_id,'\t',receiver)	
 		self.reliable_inbox_sem.release()
 
-		sem.acquire()
-		msg[ACTIVE] = self.reliable_timeout
-		t = time.time() + self.reliable_timeout
-		while time.time() <= t:
-			self.send(msg, to, self.reliable_redirect)
-
-			if self.reliable_interval > 0:
-				time.sleep(self.reliable_interval)
-
-			if sem.acquire(blocking=False):
-				sem.release()
-				msg[REPLIED] = True
-				break
-
-			msg[ATTEMPTS] += 1
-		msg[ACTIVE] = t	
-
-		if callback != None:
-			callback(msg)
-		return msg	
-
-	def reliable_redirect (self, data, reply_to):	
-
-		id = data[ID]
-		first = False
+	def reliable_receiver (self, body, sender):			
+		self.print(body, sender, debug_reliable_receiver)
+		
+		msg_id = body[ID]
 		self.reliable_inbox_sem.acquire()
-		if id not in self.reliable_inbox:
-			self.reliable_inbox[id] = data
-			data[ACTIVE] += time.time()
-			first = True
-		elif type(self.reliable_inbox[id]) == tuple:				
-			sem = self.reliable_inbox[id][1]
-			first = not sem.acquire(blocking=False)								
-			sem.release()			
+		if (not msg_id in self.reliable_inbox) or (not ID in self.reliable_inbox[msg_id]):
+			body[REPLIED] = True
+			self.reliable_inbox[msg_id] = body							
+			body, method = self.redirect(body)			
+			threading.Thread(target=method, args=(body, sender)).start()
 		self.reliable_inbox_sem.release()
 
-		if first:
-			threading.Thread(target=self.redirect, args=(data, reply_to)).start()
-		
-		self.send(id, reply_to, self.reliable_sender)	
-
-	def reliable_sender (self, id, reply_to):	
-		self.reliable_inbox_sem.acquire()
-		sem = self.reliable_inbox[id][1]
-		self.reliable_inbox_sem.release()
-
-		sem.acquire(blocking=False)
-		sem.release()
-		
-		
-		
+		self.send(self.msg(msg_id, sender, self.reliable_sender))
 		
 
-	def error (self, error, reply_to):
-		print('ERROR @',reply_to,'\n\t',error)
+	def redirect (self, msg): 
 
-	def send (self, body, to, method):
-		if self.delay_interval > 0:
-			time.sleep(self.delay_interval)
-		self.sock.sendto(repr({
-			METHOD:method.__name__, 
-			BODY:body
-		}).encode(), to)
+		method = self.__getattribute__(msg[METHOD])
+		body = msg[BODY]
 
-	def redirect (self, data, reply_to):	
-		try:
-			if type(data) == bytes:
-				data = data.decode()
+		return body, method
 
-			if type(data) == str:	
-				data = literal_eval(data)				
+	def msg (self, body, to, method):
+		return {BODY: body, METHOD: method.__name__, RECIPIENT: to}
 
-			if type(data) == dict:			
-				if METHOD in data and BODY in data:
-					self.__getattribute__(data[METHOD])(data[BODY], reply_to=reply_to)	
-					return 	
-			for d in data:
-				self.redirect(d,reply_to)
+	def msg_id (self, n, f, a, t = None):
+		if t is None:
+			t = time.time()
 
-		except Exception as ex:
-			err = f'{type(ex).__name__}:\t{ex}'		
-			traceback.print_tb(ex.__traceback__)
-		else:	
-			err = f'Malformed package body'			
-				
-		err = f'{err}\nFrom:\t{reply_to}\n\t{repr(data)}'	
+		return time.localtime(t)[:6] + (n, f.__name__) + a
 
-		print(err)		
-		self.send(err,reply_to,self.error) 								
+	def election (self, host, address = None): 	
+		if address == None:
+			# verifica se é necessária eleição para o host
+			self.white_sem.acquire()
+			for k in self.white:
+				if self.known[k] == host:
+					print('Nova eleição para quadro',k)
+					threading.Thread(args=[self.msg({
+						ID: k,
+						BODY: len(self.server),
+						ADDRESS: self.addr						 
+					}, c, self.election) for c in self.contacts], target=self.reliable_send).start()
+			self.white_sem.release()
+			return 
 
-a = traffic_ship('localhost',65432)		
-a.start()
-a.mainloop()
+		if len(self.server) < host[BODY]: 
+			host[BODY] = len(self.server)
+			host[ADDRESS] = self.addr
+			self.reliable_send(*[self.msg(host, c, self.election) for c in self.contacts])
 
+			
+if __name__ == '__main__':
+	jellypanel = traffic_surf(argv[1], int(argv[2]))
+	contacts = []
+	for f in argv[3:]:
+		h = None
+		for g in open(f,'r').read().split():
+			if h == None:
+				h = g
+			else:
+				print(h,g)
+				contacts.append((h,int(g)))	
+				h = None
+	
+	def add ():
+		time.sleep(8)
+		for c in contacts:
+			print(c)
+			jellypanel.meet(c)	
 
+	threading.Thread(target=add).start()
 
-
-
-class Shape:
-	def __init__(self, canvas, shape_type, x, y, size=50, color="blue"):
-		self.canvas = canvas
-		self.shape_type = shape_type
-		self.size = size
-		self.color = color
-
-		if self.shape_type == "square":
-			self.draw_square(x, y)
-		elif self.shape_type == "triangle":
-			self.draw_triangle(x, y)
-
-		self.canvas.tag_bind(self.shape, '<ButtonPress-1>', self.on_click)
-		self.canvas.tag_bind(self.shape, '<B1-Motion>', self.on_drag)
-		self.is_dragging = False
-
-	def draw_square(self, x, y):
-		self.shape = self.canvas.create_rectangle(
-			x, y, x + self.size, y + self.size, fill=self.color)
-
-	def draw_triangle(self, x, y):
-		x1, y1 = x, y
-		x2, y2 = x + self.size, y
-		x3, y3 = x + self.size // 2, y - self.size
-		self.shape = self.canvas.create_polygon(
-			x1, y1, x2, y2, x3, y3, fill=self.color)
-
-	def on_click(self, event):
-		print('block')
-		return
-		self.is_dragging = True
-		self.start_x = event.x
-		self.start_y = event.y
-
-	def on_drag(self, event):
-		print(self.is_dragging, event)
-		if self.is_dragging:
-			dx = event.x - self.start_x
-			dy = event.y - self.start_y
-			self.canvas.move(self.shape, dx, dy)
-			self.start_x = event.x
-			self.start_y = event.y
-
-	def stop_dragging(self):
-		print('Stop')
-		self.is_dragging = False
-
-def create_shape(event):
-	x = event.x
-	y = event.y
-
-	# Check if the click occurred on an existing shape
-	overlapping_shapes = canvas.find_overlapping(x, y, x, y)
-	if not overlapping_shapes:
-		color = entry_color.get()
-		shape_type = shape_var.get()
-		
-		if shape_type == "Square":
-			shape = Shape(canvas, "square", x, y, color=color)
-		elif shape_type == "Triangle":
-			shape = Shape(canvas, "triangle", x, y, color=color)
-
-def clear_canvas():
-	canvas.delete("all")
-
-root = tkinter.Tk()
-root.title("Shapes on Canvas")
-
-canvas = tkinter.Canvas(root, width=400, height=400, bg="white")
-canvas.pack()
-
-frame = tkinter.Frame(root)
-frame.pack(pady=10)
-
-label_color = tkinter.Label(frame, text="Color:")
-label_color.grid(row=0, column=0)
-entry_color = tkinter.Entry(frame)
-entry_color.grid(row=0, column=1)
-
-shape_var = tkinter.StringVar(value="Square")
-shape_label = tkinter.Label(frame, text="Shape:")
-shape_label.grid(row=1, column=0)
-shape_option = tkinter.OptionMenu(frame, shape_var, "Square", "Triangle")
-shape_option.grid(row=1, column=1)
-
-create_button = tkinter.Button(frame, text="Create Shape")
-create_button.grid(row=2, columnspan=2)
-canvas.bind("<Button-1>", create_shape)
-
-clear_button = tkinter.Button(frame, text="Clear Canvas", command=clear_canvas)
-clear_button.grid(row=3, columnspan=2)
-
-root.mainloop()
+	jellypanel.mainloop()

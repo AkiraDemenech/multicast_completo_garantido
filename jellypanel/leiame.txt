@@ -1,0 +1,2 @@
+Execução:
+    python jellypanel.py IP PORTA <nome do arquivo de hosts>
