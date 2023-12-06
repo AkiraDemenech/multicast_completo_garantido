@@ -67,8 +67,7 @@ class rect:
 		self.x = x
 		self.y = y
 
-	def stop (self):
-		self.is_dragging = False
+		
 
 class traffic_surf:
 	 
@@ -171,7 +170,10 @@ class traffic_surf:
 		self.canvas.configure(bg='white')
 
 		self.white_sem.acquire()
-		if not id in self.white:
+		if id in self.white:
+			for rect in self.white[id]:
+				print(rect) # carregar última posição dos retângulos
+		else:	
 			self.white[id] = {}
 		address = self.known[id]
 		self.white_sem.release()	
@@ -205,6 +207,7 @@ class traffic_surf:
 		self.white_sem.release()
 		
 		self.join(n)	
+		self.update_known()
 
 	def create_rect (self, event):
 		x = event.x
@@ -226,6 +229,8 @@ class traffic_surf:
 		self.server_sem.release()
 
 			
+		# envio seguro de todas as formas atualmente no quadro
+
 	def find_request (self, known, client):
 		print(client,'quer conhecer mais quadros')
 		self.reliable_send(self.msg(self.known, client, self.find_response))	
@@ -527,6 +532,6 @@ if __name__ == '__main__':
 			print(c)
 			jellypanel.meet(c)	
 
-	threading.Thread(target=add).start()
+	threading.Thread(target=add, daemon=True).start()
 
 	jellypanel.mainloop()
