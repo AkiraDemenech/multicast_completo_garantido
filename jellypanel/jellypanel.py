@@ -273,6 +273,7 @@ class traffic_surf:
 	def move_rect (self, data, server = None):
 		rect_id, rect_data, last = data
 		id = rect_id[1]
+		t = last[0]
 
 		self.white_sem.acquire()
 		if not id in self.known:
@@ -284,8 +285,11 @@ class traffic_surf:
 
 		if rect_id in self.white[id]:	
 			l = self.white[id][rect_id]			
-			l[0] = last[0]
-			last = l
+			if l[0] < t:
+				l[0] = t
+				last = l
+			else:	
+				rect_data = l[1]
 		else:	
 			print('Criado retângulo',*rect_id)
 			self.white[id][rect_id] = last = last[:2]
