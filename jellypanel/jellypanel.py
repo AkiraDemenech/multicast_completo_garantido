@@ -26,6 +26,7 @@ debug = dummy
 #debug = print
 
 
+debug_threading = debug#print
 debug_meet = debug
 
 debug_send = debug
@@ -48,12 +49,13 @@ debug_rect_move = debug
 
 class rect:
 
-	is_dragging = False
+	exclusive = False 
 
 	def __init__(self, id, jellypanel, x, y, width, height, color):
 		self.x = x 
 		self.y = y
 		self.id = id
+		#self.sem = threading.Semaphore()
 		self.jellypanel = jellypanel
 		self.canvas = jellypanel.canvas				
 		self.rect = self.canvas.create_rectangle(x, y, x + width, y + height, fill=color)
@@ -67,13 +69,13 @@ class rect:
 		debug_rect_click('Clicar')
 		# pedir exclusividade do objeto para o servidor
 		self.jellypanel.mutex(self.id)
-		#self.is_dragging = True
+		#self.exclusive = True
 		self.x_clicked = self.x - event.x
 		self.y_clicked = self.y - event.y		
 
 	def drag (self, event):
-		debug_rect_drag('Arrastar',self.is_dragging)
-		if self.is_dragging:			
+		debug_rect_drag('Arrastar',self.exclusive)
+		if self.exclusive:			
 			# enviar nova posição para o servidor
 			self.jellypanel.move(self, event.x + self.x_clicked, event.y + self.y_clicked)
 
@@ -86,7 +88,7 @@ class rect:
 	def release	(self, event):
 		debug_rect_release('Soltar')
 		self.jellypanel.mutex(self.id, False) # ceder a exclusividade do objeto
-		self.is_dragging = self.x_clicked = self.y_clicked = False
+		self.exclusive = self.x_clicked = self.y_clicked = False
 		
 		
 		
@@ -122,10 +124,10 @@ class traffic_surf:
 	root = tkinter.Tk()
 
 	looping = True
-	delay = 0.05
+	delay = 0#.4
 	reliable_timeout = 2
 	reliable_interval = 0.1
-	heartbeat_interval = 5
+	heartbeat_interval = 1
 	max_size = 1024
 
 	def __init__ (self, ip, port, name = None, password = None):
@@ -193,27 +195,35 @@ class traffic_surf:
 
 	def mutex (self, rect_id, start=True):
 		print('Exclusividade para',rect_id)
+		debug_threading('mutex:\tinício')
 
 		self.white_sem.acquire()
 		address = self.known[rect_id[1]]
 		self.white_sem.release()
 
 		threading.Thread(target=self.reliable_send, args=[self.msg(rect_id, address, self.mutex_request if start else self.mutex_release)]).start()
+		debug_threading('mutex:\tfim')
 
 	def move (self, rect, x, y):
+		debug_threading('move:\tinício')
 		rect.move(x,y)
 		self.white_sem.acquire()
 		address = self.known[rect.id[1]]
 		self.white_sem.release()
 
 		self.send(self.msg((rect.id, x, y), address, self.move_request))		
+		debug_threading('move:\tfim')
 
 	def find (self):
 		print('Localizar quadros')
+		debug_threading('find:\tinício')
 		threading.Thread(target=self.reliable_send, args=[self.msg(self.known, c, self.find_request) for c in self.contacts]).start()
+	#	self.contacts_sem.release()
 		self.update_known()
+		debug_threading('find:\tfim')
 	
 	def join (self, id):
+		debug_threading('join:\tinício')
 		if self.current != id:			 
 			self.current = id
 			print('Ingressar em quadro',id)		
@@ -242,10 +252,12 @@ class traffic_surf:
 		threading.Thread(target=self.reliable_send, args=[self.msg(id, address, self.join_request)]).start()		
 		
 		
+		debug_threading('join:\tfim')
 
 	
 	def create (self):
 		print('Criar novo quadro em branco')
+		debug_threading('create:\tinício')
 		t = time.localtime()[:6]		
 		
 		self.server_sem.acquire()
@@ -269,16 +281,21 @@ class traffic_surf:
 		
 		self.join(n)	
 		self.update_known()
+		debug_threading('create:\tfim')
 
 	def create_rect (self, event):
 		if self.current == None:
 			return 
 
 			
+		
 
 		if self.canvas.find_overlapping(event.x, event.y, event.x, event.y):
 			return 
 		
+
+		debug_threading('create_rect:\tinício')	
+
 		# enviar informações do novo retângulo para o servidor do quadro atual
 
 		self.white_sem.acquire()
@@ -286,9 +303,11 @@ class traffic_surf:
 		self.white_sem.release()
 
 		print('Criando retângulo')
+		debug_threading('create_rect:\tfim')
 				
 
 	def move_rect (self, data, server = None):
+		debug_threading('move_rect:\tinício')
 		rect_id, rect_data, last = data
 		id = rect_id[1]
 		t = last[0]
@@ -321,8 +340,11 @@ class traffic_surf:
 				self.display_current_white[rect_id] = rect(rect_id, self, *rect_data)			
 		self.white_sem.release()
 		
+		debug_threading('move_rect:\tfim')
+
 	def move_request (self, pos, client):	
 		rect_id, x, y = pos
+		debug_threading('move_request:\tinício')
 
 		self.server_sem.acquire()		
 		r, l = self.server[rect_id[1]][0][rect_id]
@@ -335,11 +357,13 @@ class traffic_surf:
 		self.server_sem.release()
 
 		print(rect_id,'\t',x,y)
+		debug_threading('move_request:\tfim')
 
 
 	def create_rect_request (self, rect, client):	
 		id, rect = rect
 		print('Quadro',id,'\t',rect)
+		debug_threading('create_rect_request:\tinício')
 
 		self.server_sem.acquire()
 		t = time.time()
@@ -354,11 +378,13 @@ class traffic_surf:
 		print('Enviando retângulo',*rect_id,'\t',*rect)
 		self.reliable_send(*transmission)	
 
+		debug_threading('create_rect_request:\tfim')
 
 	
 
 	def join_request (self, id, client):	
 		print(client,'pediu para participar de',id)
+		debug_threading('join_request:\tinício')
 
 		self.server_sem.acquire()
 		self.server[id][-1].add(client)
@@ -368,25 +394,65 @@ class traffic_surf:
 		# envio seguro de todas as formas atualmente no quadro
 		self.reliable_send(*[self.msg((r,) + self.server[id][0][r][:2], client, self.move_rect) for r in self.server[id][0]])
 		self.server_sem.release()
+		debug_threading('join_request:\tfim')
 
 	def find_request (self, known, client):
 		print(client,'quer conhecer mais quadros')
+		debug_threading('find_request:\tinício')
 		self.reliable_send(self.msg(self.known, client, self.find_response))	
 		self.find_response(known, client)
+		debug_threading('find_request:\tfim')
 		
 	def find_response (self, known, client):
+		debug_threading('find_response:\tinício')
 		self.white_sem.acquire()
 		self.known.update(known)
 		print('Quadros conhecidos:\t',self.known)
 		self.white_sem.release()
 		self.update_known()
 
+		if self.current in known:
+			self.join(self.current)
+
+			time.sleep(self.reliable_timeout)
+			self.join(self.current)
+		debug_threading('find_response:\tfim')	
+
+	def restore_request (self, id, server):
+		print('Restaurando',id,'em',server)
+		debug_threading('restore_request:\tinício')
+
+		self.white_sem.acquire()
+		if id in self.white:
+			for r in self.white[id]:
+				threading.Thread(target=self.reliable_send, args=[self.msg((r, self.white[id][r]), server, self.restore_response)]).start()
+		self.white_sem.release()
+		debug_threading('restore_request:\tfim')
+
+	def restore_response (self, data, client):	
+		rect_id, last = data	
+		debug_threading('restore_response:\tinício')
+		print('Restauração de',rect_id,'por',client)
+
+		
+
+		self.server_sem.acquire()
+		s,l = self.server[rect_id[1]]
+		l.add(client)
+		if (not rect_id in s) or s[rect_id][1][0] < last[0]:
+			s[rect_id] = list(last[1]), [last[0], None]
+		self.server_sem.release()
+
+		print(s)
+		debug_threading('restore_response:\tfim')
+
 	def mutex_request (self, rect_id, client):
 		print(client,'solicitando exclusividade para',rect_id)
-		self.contacts_sem.acquire()
+		debug_threading('mutex_request:\tinício')
+	#	self.contacts_sem.acquire()
 		if client in self.contacts_addr:
 			client = self.contacts_addr[client]
-		self.contacts_sem.release()		
+	#	self.contacts_sem.release()		
 
 		self.server_sem.acquire()
 		r,l = self.server[rect_id[1]][0][rect_id]
@@ -402,22 +468,27 @@ class traffic_surf:
 		if r:
 			self.reliable_send(self.msg(rect_id, client, self.mutex_response))
 			print(client, 'autorizado!')
+		debug_threading('mutex_request:\tfim')	
 
 	def mutex_response (self, rect_id, server):				
 
+		debug_threading('mutex_response:\tinício')	
+
 		self.white_sem.acquire()
-		self.display_current_white[rect_id].is_dragging = True
+		self.display_current_white[rect_id].exclusive = True
 		self.white_sem.release()
 
 		print('Exclusividade autorizada para', rect_id)
+		debug_threading('mutex_response:\tfim')
 
 	def mutex_release (self, rect_id, client):
 		print(client,'encerra a exclusividade de',rect_id)
+		debug_threading('mutex_release:\tinício')
 
-		self.contacts_sem.acquire()
+	#	self.contacts_sem.acquire()
 		if client in self.contacts_addr:
 			client = self.contacts_addr[client]
-		self.contacts_sem.release()	
+	#	self.contacts_sem.release()	
 
 		self.server_sem.acquire()		
 		self.server[rect_id[1]][0][rect_id][1][1] = None		
@@ -426,8 +497,10 @@ class traffic_surf:
 		self.server_sem.release()
 
 		self.reliable_send(*transmission)
+		debug_threading('mutex_release:\tfim')
 
 	def update_known (self):
+		debug_threading('update_known:\tinício')
 		self.white_sem.acquire()			
 
 		for k in self.known:
@@ -445,13 +518,24 @@ class traffic_surf:
 		self.canvas_list.canvas.yview_moveto(0)
 	#	self.canvas_list.canvas.update_idletasks()
 	#	print('Botões de quadros conhecidos atualizados')
+		debug_threading('update_known:\tfim')
 
 	 
+	
+	def restore (self, id): 
+		debug_threading('restore:\tinício')
+	#	self.contacts_sem.acquire()
+		call = [self.msg(id, c, self.restore_request) for c in list(self.contacts) + [self.addr]]
+	#	self.contacts_sem.release()
+
+		self.reliable_send(*call)
+		debug_threading('restore:\tfim')
 
 	def print (self, a, reply_to=None, print_f = print):
 		print_f(reply_to, '\n', a)
 
 	def meet (self, contact, address = None):
+		debug_threading('meet:\tinício')
 		debug_meet('Conhecendo', contact, address)				
 		
 		if address != None:
@@ -479,10 +563,12 @@ class traffic_surf:
 		}, contact, self.meet))		
 
 
+		debug_threading('meet:\tfim')
 
 
 	def heartbeat_listener (self, interval, address):
 		t = time.time()
+		debug_threading('heartbeat_listener:\tinício')
 		
 		expected = t + interval
 		
@@ -500,8 +586,10 @@ class traffic_surf:
 
 		self.contacts_activity[address] = dt, t, expected, expected + dt # dt[0] t[1] timeout[-1]	
 		self.contacts_sem.release()
+		debug_threading('heartbeat_listener:\tfim')
 
 	def heartbeat_loop (self):
+		debug_threading('heartbeat_loop:\tinício')
 
 		while self.looping:
 			debug_heartbeat_loop('Coração batendo')
@@ -511,10 +599,12 @@ class traffic_surf:
 			self.send(*[self.msg(self.heartbeat_interval, a, self.heartbeat_listener) for a in self.contacts])
 			
 			time.sleep(self.heartbeat_interval)
+		debug_threading('heartbeat_loop:\tfim')	
 
 	def activity_loop (self):
+		debug_threading('activity_loop:\tinício')
 		while self.looping:
-			self.contacts_sem.acquire()
+		#	self.contacts_sem.acquire()
 			for address in list(self.contacts_activity):
 				if time.time() >= self.contacts_activity[address][-1]:
 					debug_activity_loop(address,'caiu')
@@ -526,10 +616,18 @@ class traffic_surf:
 
 						
 
-			self.contacts_sem.release()	
+		#			self.white_sem.acquire()
+					for k in list(self.known):
+						if self.known[k] == address:		
+							threading.Thread(target=self.election, args=[k]).start()	
+							debug_activity_loop('Eleição para o quadro',k)
+							self.known.pop(k)
+		#			self.white_sem.release()
+		#	self.contacts_sem.release()	
 
 			time.sleep(self.heartbeat_interval)
 
+		debug_threading('activity_loop:\tfim')
 	def mainloop (self): 
 		threading.Thread(target=self.send_loop,daemon=True).start()
 		threading.Thread(target=self.receive_loop,daemon=True).start()
@@ -539,6 +637,7 @@ class traffic_surf:
 	
 
 	def receive_loop (self):
+		debug_threading('receive_loop:\tinício')
 		while self.looping:
 			debug_receive_loop('Aguardando recebimentos')
 
@@ -560,6 +659,7 @@ class traffic_surf:
 			threading.Thread(args=(body, addr), target=method).start()		
 
 		
+		debug_threading('receive_loop:\tfim')
 			
 
 	def send_loop (self): # consumidor de mensagens 		
@@ -568,6 +668,7 @@ class traffic_surf:
 		
 		
 		
+		debug_threading('send_loop:\tinício')
 		while self.looping:
 			debug_send_loop('Aguardando mensagens')
 			self.outbox_len.acquire()
@@ -602,11 +703,13 @@ class traffic_surf:
 
 
 			self.outbox_sem.release()
+		debug_threading('send_loop:\tfim')	
 	
 	def send (self, *msgs):
 		if not len(msgs):
 			return 				 
 
+		debug_threading('send:\tinício')
 		t = time.time() + self.delay 		
 		debug_send('Aguardando fila')
 		self.outbox_sem.acquire()
@@ -615,9 +718,11 @@ class traffic_surf:
 			self.outbox.append((t,msg))
 		self.outbox_len.release(len(msgs))			
 		self.outbox_sem.release()	
+		debug_threading('send:\tfim')
 
 	def reliable_send (self, *msgs):
 		
+		debug_threading('reliable_send:\tinício')
 
 		meta_msgs = []		
 		self.reliable_inbox_sem.acquire()
@@ -631,6 +736,7 @@ class traffic_surf:
 
 		timeout = time.time() + self.reliable_timeout
 
+		debug_threading('reliable_send:\tfim')
 		while time.time() <= timeout:
 			self.send(*meta_msgs)	
 			time.sleep(self.reliable_interval)
@@ -645,15 +751,19 @@ class traffic_surf:
 
 
 
+		debug_threading('reliable_sender:\tinício')	
 		self.reliable_inbox_sem.acquire()				
 		if msg_id in self.reliable_inbox:
 			self.reliable_inbox[msg_id][REPLIED] = True
 		debug_reliable_sender(msg_id,'\t',receiver)	
 		self.reliable_inbox_sem.release()
+		debug_threading('reliable_sender:\tfim')
 
 	def reliable_receiver (self, body, sender):			
 		self.print(body, sender, debug_reliable_receiver)
 		
+		debug_threading('reliable_receiver:\tinício')
+
 		msg_id = body[ID]
 		self.reliable_inbox_sem.acquire()
 		if (not msg_id in self.reliable_inbox) or (not ID in self.reliable_inbox[msg_id]):
@@ -665,6 +775,7 @@ class traffic_surf:
 
 		self.send(self.msg(msg_id, sender, self.reliable_sender))
 		
+		debug_threading('reliable_receiver:\tfim')
 
 	def redirect (self, msg): 
 
@@ -682,25 +793,69 @@ class traffic_surf:
 
 		return time.localtime(t)[:6] + (n, f.__name__) + a
 
-	def election (self, host, address = None): 	
-		if address == None:
-			# verifica se é necessária eleição para o host
-			self.white_sem.acquire()
-			for k in self.white:
-				if self.known[k] == host:
-					print('Nova eleição para quadro',k)
-					threading.Thread(args=[self.msg({
-						ID: k,
-						BODY: len(self.server),
-						ADDRESS: self.addr						 
-					}, c, self.election) for c in self.contacts], target=self.reliable_send).start()
-			self.white_sem.release()
-			return 
+	def election (self, role, address = None): 	
+		debug_threading('election:')
+		attr = (len(self.server), len(self.white), -self.start, self.name) + self.addr		
+		
+		if address == None: # começar eleição
+		#	self.contacts_sem.acquire()
+			ring = list(self.contacts)
+		#	self.contacts_sem.release()
+			ring.append(self.addr)
 
-		if len(self.server) < host[BODY]: 
-			host[BODY] = len(self.server)
-			host[ADDRESS] = self.addr
-			self.reliable_send(*[self.msg(host, c, self.election) for c in self.contacts])
+			role = {
+				ID: role,
+				ADDRESS: self.addr,
+				BODY: attr,
+				RECIPIENT: ring,
+				REPLIED: False
+			}
+
+		else:
+			
+			role[REPLIED] += 1
+			
+		#	self.contacts_sem.acquire()
+			for c in role[RECIPIENT]:
+				if c != self.addr and not c in self.contacts:
+					threading.Thread(target=self.meet, args=[c]).start()
+
+			#for c in self.contacts:
+			#	if not c in role[RECIPIENT]:
+			#		role[RECIPIENT].insert(role[REPLIED], c)					
+		#	self.contacts_sem.release()
+
+			if role[REPLIED] >= len(role[RECIPIENT]):
+				role[REPLIED] = 0
+
+			if attr < role[BODY]: # sou preferível
+				role[ADDRESS] = self.addr
+				role[BODY] = attr
+			elif role[ADDRESS] == self.addr:
+				# ganhei a eleição!	
+				print('Eleito!',role[ID])
+
+				self.server_sem.acquire()
+				self.server[role[ID]] = {}, set()
+				self.server_sem.release()
+
+				self.white_sem.acquire()
+				self.known[role[ID]] = self.addr
+				self.white_sem.release()
+
+				self.find()
+				self.restore(role[ID])
+				if self.current:
+					self.join(self.current)
+				return 
+
+		self.white_sem.acquire()
+		if role[ID] in self.known: 
+			self.known.pop(role[ID])
+		self.white_sem.release()
+
+		print(role)
+		self.reliable_send(self.msg(role, role[RECIPIENT][role[REPLIED]], self.election))
 
 			
 if __name__ == '__main__':
@@ -725,3 +880,7 @@ if __name__ == '__main__':
 	threading.Thread(target=add, daemon=True).start()
 
 	jellypanel.mainloop()
+	for c in jellypanel.contacts:
+		print(c, '\t', jellypanel.contacts[c])
+	for c in jellypanel.contacts_addr:
+		print(c, jellypanel.contacts_addr[c])	
