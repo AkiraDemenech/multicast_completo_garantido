@@ -14,7 +14,6 @@ METHOD = 'Target'
 RECIPIENT = 'To'
 REPLIED = 'Replied'
 
-
 NAME = 'Name'
 ADDRESS = 'Address'
 
@@ -24,7 +23,6 @@ def dummy (*a, **k):
 
 debug = dummy
 #debug = print
-
 
 debug_threading = debug#print
 debug_meet = debug
@@ -98,7 +96,6 @@ class traffic_surf:
 	server_sem = threading.Semaphore() 
 	white_sem = threading.Semaphore()
 
-	
 	server = {}	# quadros gerenciados
 	white = {}	# quadros participando
 	known = {}	# quadros conhecidos
@@ -107,7 +104,6 @@ class traffic_surf:
 
 	current = None # quadro atual
 
-				
 	inbox = {}	# mensagens recebidas 
 	outbox = []	# mensagens enviadas
 	outbox_len = threading.Semaphore(0) # quantidade de mensagens esperando 
@@ -146,7 +142,6 @@ class traffic_surf:
 
 		self.canvas.bind('<Button-1>', self.create_rect)
 
-		
 		self.root.frame = tkinter.Frame(self.root)
 		self.root.frame.pack(pady=10)
 
@@ -252,7 +247,6 @@ class traffic_surf:
 		# solicitar participação para o servidor
 		threading.Thread(target=self.reliable_send, args=[self.msg(id, address, self.join_request)]).start()		
 		
-		
 		debug_threading('join:\tfim')
 
 	
@@ -287,13 +281,10 @@ class traffic_surf:
 	def create_rect (self, event):
 		if self.current == None:
 			return 
-
-			
 		
 
 		if self.canvas.find_overlapping(event.x, event.y, event.x, event.y):
 			return 
-		
 
 		debug_threading('create_rect:\tinício')	
 
@@ -340,7 +331,6 @@ class traffic_surf:
 				print('Mostrando retângulo')
 				self.display_current_white[rect_id] = rect(rect_id, self, *rect_data)			
 		self.white_sem.release()
-		
 		debug_threading('move_rect:\tfim')
 
 	def move_request (self, pos, client):	
@@ -378,7 +368,6 @@ class traffic_surf:
 
 		print('Enviando retângulo',*rect_id,'\t',*rect)
 		self.reliable_send(*transmission)	
-
 		debug_threading('create_rect_request:\tfim')
 
 	
@@ -391,7 +380,6 @@ class traffic_surf:
 		self.server[id][-1].add(client)
 		
 
-			
 		# envio seguro de todas as formas atualmente no quadro
 		self.reliable_send(*[self.msg((r,) + self.server[id][0][r][:2], client, self.move_rect) for r in self.server[id][0]])
 		self.server_sem.release()
@@ -513,7 +501,6 @@ class traffic_surf:
 				
 		self.white_sem.release()	
 
-		
 	#	self.canvas_list.update()		
 		self.canvas_list.canvas.refresh()
 		self.canvas_list.canvas.yview_moveto(0)
@@ -521,7 +508,6 @@ class traffic_surf:
 	#	print('Botões de quadros conhecidos atualizados')
 		debug_threading('update_known:\tfim')
 
-	 
 	
 	def restore (self, id): 
 		debug_threading('restore:\tinício')
@@ -551,7 +537,6 @@ class traffic_surf:
 					threading.Thread(target=self.meet, args=[c]).start()					
 			self.contacts_sem.release()
 
-
 			if contact[REPLIED]:
 				return 
 			contact = address	
@@ -562,8 +547,6 @@ class traffic_surf:
 			REPLIED: address,			
 			BODY: list(self.contacts)
 		}, contact, self.meet))		
-
-
 		debug_threading('meet:\tfim')
 
 
@@ -577,11 +560,6 @@ class traffic_surf:
 		if address in self.contacts_activity:
 			dt = max(interval, t - self.contacts_activity[address][1])
 		else:	
-
-
-
-
-	
 			dt = interval
 			threading.Thread(target=self.meet, args=[address]).start()
 
@@ -595,8 +573,6 @@ class traffic_surf:
 		while self.looping:
 			debug_heartbeat_loop('Coração batendo')
 
-				
-				
 			self.send(*[self.msg(self.heartbeat_interval, a, self.heartbeat_listener) for a in self.contacts])
 			
 			time.sleep(self.heartbeat_interval)
@@ -615,8 +591,6 @@ class traffic_surf:
 					if address in self.contacts:
 						self.contacts.pop(address)
 
-						
-
 		#			self.white_sem.acquire()
 					for k in list(self.known):
 						if self.known[k] == address:		
@@ -627,7 +601,6 @@ class traffic_surf:
 		#	self.contacts_sem.release()	
 
 			time.sleep(self.heartbeat_interval)
-
 		debug_threading('activity_loop:\tfim')
 	def mainloop (self): 
 		threading.Thread(target=self.send_loop,daemon=True).start()
@@ -658,17 +631,11 @@ class traffic_surf:
 
 			debug_receive_loop(addr, '\t', method, '\n', body)
 			threading.Thread(args=(body, addr), target=method).start()		
-
-		
 		debug_threading('receive_loop:\tfim')
 			
 
 	def send_loop (self): # consumidor de mensagens 		
 
-		
-		
-		
-		
 		debug_threading('send_loop:\tinício')
 		while self.looping:
 			debug_send_loop('Aguardando mensagens')
@@ -677,12 +644,6 @@ class traffic_surf:
 			self.outbox_sem.acquire()
 			debug_send_loop('Enviando....')
 
-
-
-
-
-
-				
 			t = time.time()
 
 			c = self.outbox_len._value
@@ -722,7 +683,6 @@ class traffic_surf:
 		debug_threading('send:\tfim')
 
 	def reliable_send (self, *msgs):
-		
 		debug_threading('reliable_send:\tinício')
 
 		meta_msgs = []		
@@ -749,9 +709,6 @@ class traffic_surf:
 
 
 	def reliable_sender (self, msg_id, receiver):
-
-
-
 		debug_threading('reliable_sender:\tinício')	
 		self.reliable_inbox_sem.acquire()				
 		if msg_id in self.reliable_inbox:
@@ -762,7 +719,6 @@ class traffic_surf:
 
 	def reliable_receiver (self, body, sender):			
 		self.print(body, sender, debug_reliable_receiver)
-		
 		debug_threading('reliable_receiver:\tinício')
 
 		msg_id = body[ID]
@@ -775,7 +731,6 @@ class traffic_surf:
 		self.reliable_inbox_sem.release()
 
 		self.send(self.msg(msg_id, sender, self.reliable_sender))
-		
 		debug_threading('reliable_receiver:\tfim')
 
 	def redirect (self, msg): 
