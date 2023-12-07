@@ -217,6 +217,7 @@ class traffic_surf:
 	def find (self):
 		print('Localizar quadros')
 		debug_threading('find:\tinício')
+	#	self.contacts_sem.acquire()
 		threading.Thread(target=self.reliable_send, args=[self.msg(self.known, c, self.find_request) for c in self.contacts]).start()
 	#	self.contacts_sem.release()
 		self.update_known()
