@@ -66,7 +66,8 @@ class rect:
 	def click (self, event):
 		debug_rect_click('Clicar')
 		# pedir exclusividade do objeto para o servidor
-		self.is_dragging = True
+		self.jellypanel.mutex(self.id)
+		#self.is_dragging = True
 		self.x_clicked = self.x - event.x
 		self.y_clicked = self.y - event.y		
 
@@ -74,7 +75,7 @@ class rect:
 		debug_rect_drag('Arrastar',self.is_dragging)
 		if self.is_dragging:			
 			# enviar nova posição para o servidor
-			self.move(event.x + self.x_clicked, event.y + self.y_clicked)
+			self.jellypanel.move(self, event.x + self.x_clicked, event.y + self.y_clicked)
 
 	def move (self, x, y):		
 		debug_rect_move(x,y)
@@ -84,7 +85,7 @@ class rect:
 
 	def release	(self, event):
 		debug_rect_release('Soltar')
-		# ceder a exclusividade do objeto
+		self.jellypanel.mutex(self.id, False) # ceder a exclusividade do objeto
 		self.is_dragging = self.x_clicked = self.y_clicked = False
 		
 		
@@ -189,6 +190,23 @@ class traffic_surf:
 		self.canvas_list.canvas.create_window((0, 0), window=self.canvas_list.button_frame, anchor=tkinter.NW)
 
 		self.canvas_list.canvas.refresh()
+
+	def mutex (self, rect_id, start=True):
+		print('Exclusividade para',rect_id)
+
+		self.white_sem.acquire()
+		address = self.known[rect_id[1]]
+		self.white_sem.release()
+
+		threading.Thread(target=self.reliable_send, args=[self.msg(rect_id, address, self.mutex_request if start else self.mutex_release)]).start()
+
+	def move (self, rect, x, y):
+		rect.move(x,y)
+		self.white_sem.acquire()
+		address = self.known[rect.id[1]]
+		self.white_sem.release()
+
+		self.send(self.msg((rect.id, x, y), address, self.move_request))		
 
 	def find (self):
 		print('Localizar quadros')
@@ -303,6 +321,21 @@ class traffic_surf:
 				self.display_current_white[rect_id] = rect(rect_id, self, *rect_data)			
 		self.white_sem.release()
 		
+	def move_request (self, pos, client):	
+		rect_id, x, y = pos
+
+		self.server_sem.acquire()		
+		r, l = self.server[rect_id[1]][0][rect_id]
+		data = rect_id, r, l
+		l[0] = time.time()
+		r[0] = x
+		r[1] = y						
+		if random.random() <= 0.3:
+			self.send(*[self.msg(data, c, self.move_rect) for c in self.server[rect_id[1]][1] if c != client])
+		self.server_sem.release()
+
+		print(rect_id,'\t',x,y)
+
 
 	def create_rect_request (self, rect, client):	
 		id, rect = rect
@@ -313,7 +346,7 @@ class traffic_surf:
 		last = [t, None]
 		s, l = self.server[id]
 		rect_id = (f'{len(self.server)}{len(s)}',) + client + time.localtime()[:6], id		
-		s[rect_id] = rect, last, threading.Semaphore()
+		s[rect_id] = list(rect), last#, threading.Semaphore()
 		data = rect_id, rect, last
 		transmission = [self.msg(data, c, self.move_rect) for c in l]
 		self.server_sem.release()
@@ -322,6 +355,7 @@ class traffic_surf:
 		self.reliable_send(*transmission)	
 
 
+	
 
 	def join_request (self, id, client):	
 		print(client,'pediu para participar de',id)
@@ -346,6 +380,52 @@ class traffic_surf:
 		print('Quadros conhecidos:\t',self.known)
 		self.white_sem.release()
 		self.update_known()
+
+	def mutex_request (self, rect_id, client):
+		print(client,'solicitando exclusividade para',rect_id)
+		self.contacts_sem.acquire()
+		if client in self.contacts_addr:
+			client = self.contacts_addr[client]
+		self.contacts_sem.release()		
+
+		self.server_sem.acquire()
+		r,l = self.server[rect_id[1]][0][rect_id]
+		r = True
+
+		if l[1] == None:
+			l[1] = client
+			
+		elif l[1] != client:	
+			r = False
+		self.server_sem.release()
+
+		if r:
+			self.reliable_send(self.msg(rect_id, client, self.mutex_response))
+			print(client, 'autorizado!')
+
+	def mutex_response (self, rect_id, server):				
+
+		self.white_sem.acquire()
+		self.display_current_white[rect_id].is_dragging = True
+		self.white_sem.release()
+
+		print('Exclusividade autorizada para', rect_id)
+
+	def mutex_release (self, rect_id, client):
+		print(client,'encerra a exclusividade de',rect_id)
+
+		self.contacts_sem.acquire()
+		if client in self.contacts_addr:
+			client = self.contacts_addr[client]
+		self.contacts_sem.release()	
+
+		self.server_sem.acquire()		
+		self.server[rect_id[1]][0][rect_id][1][1] = None		
+		data = (rect_id,) + self.server[rect_id[1]][0][rect_id]
+		transmission = [self.msg(data, c, self.move_rect) for c in self.server[rect_id[1]][1] if c != client]		
+		self.server_sem.release()
+
+		self.reliable_send(*transmission)
 
 	def update_known (self):
 		self.white_sem.acquire()			
