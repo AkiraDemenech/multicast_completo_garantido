@@ -20,6 +20,7 @@ ADDRESS = 'Address'
 
 def dummy (*a, **k):
 	pass
+	
 
 debug = dummy
 #debug = print
@@ -99,6 +100,7 @@ class traffic_surf:
 	white = {}	# quadros participando
 	known = {}	# quadros conhecidos
 	display_known = {} # botões dos quadros conhecidos
+	display_current_white = {} # retângulos do quadro atual 
 
 	current = None # quadro atual
 
@@ -119,7 +121,7 @@ class traffic_surf:
 	root = tkinter.Tk()
 
 	looping = True
-	delay = 0.4
+	delay = 0.05
 	reliable_timeout = 2
 	reliable_interval = 0.1
 	heartbeat_interval = 5
@@ -194,24 +196,34 @@ class traffic_surf:
 		self.update_known()
 	
 	def join (self, id):
-		print('Ingressar em quadro',id)
-		self.current = id
-		self.canvas.delete(tkinter.ALL)
-		self.canvas.configure(bg='white')
+		if self.current != id:			 
+			self.current = id
+			print('Ingressar em quadro',id)		
+			self.canvas.delete(tkinter.ALL)
+			self.canvas.configure(bg='white')
 
-		self.white_sem.acquire()
-		if id in self.white:
-			for rect in self.white[id]:
-				print(rect) # carregar última posição dos retângulos
-		else:	
-			self.white[id] = {}
+			self.white_sem.acquire()
+			self.display_current_white.clear()				
+
+			if id in self.white:
+				for r in self.white[id]:
+					last = self.white[id][r]
+				#	print(r, last)
+					threading.Thread(target=self.move_rect, args=[(r,last[1],last)]).start() # carregar última posição dos retângulos
+			else:	
+				self.white[id] = {}
+				
+		else:		
+			self.white_sem.acquire()
 		address = self.known[id]
 		self.white_sem.release()	
 
-		# solicitar participação para o servidor
-		threading.Thread(target=self.reliable_send, args=[self.msg(id, address, self.join_request)]).start()
 		
-		self.update_known()
+
+		# solicitar participação para o servidor
+		threading.Thread(target=self.reliable_send, args=[self.msg(id, address, self.join_request)]).start()		
+		
+		
 
 	
 	def create (self):
@@ -251,20 +263,73 @@ class traffic_surf:
 		
 		# enviar informações do novo retângulo para o servidor do quadro atual
 
-		rect('', self, event.x, event.y, int(self.entry_width.get()), int(self.entry_height.get()), self.entry_color.get())		
+		self.white_sem.acquire()
+		threading.Thread(target=self.reliable_send, args=[self.msg((self.current, (event.x, event.y, int(self.entry_width.get()), int(self.entry_height.get()), self.entry_color.get())), self.known[self.current], self.create_rect_request)]).start()
+		self.white_sem.release()
 
-	def move_rect (self, id, x, y):
-		print('Mover',id,'\t',x,y)
+		print('Criando retângulo')
+				
+
+	def move_rect (self, data, server = None):
+		rect_id, rect_data, last = data
+		id = rect_id[1]
+
+		self.white_sem.acquire()
+		if not id in self.known:
+			threading.Thread(target=self.find).start()
+
+		if not id in self.white:
+			self.white[id] = {}	
+			print('Adicionado quadro',id)
+
+		if rect_id in self.white[id]:	
+			l = self.white[id][rect_id]			
+			l[0] = last[0]
+			last = l
+		else:	
+			print('Criado retângulo',*rect_id)
+			self.white[id][rect_id] = last = last[:2]
+		last[1] = rect_data
+		
+		if self.current == id:	 
+			if rect_id in self.display_current_white:	
+				self.display_current_white[rect_id].move(*rect_data[:2])	
+			else:
+				print('Mostrando retângulo')
+				self.display_current_white[rect_id] = rect(rect_id, self, *rect_data)			
+		self.white_sem.release()
+		
+
+	def create_rect_request (self, rect, client):	
+		id, rect = rect
+		print('Quadro',id,'\t',rect)
+
+		self.server_sem.acquire()
+		t = time.time()
+		last = [t, None]
+		s, l = self.server[id]
+		rect_id = (f'{len(self.server)}{len(s)}',) + client + time.localtime()[:6], id		
+		s[rect_id] = rect, last, threading.Semaphore()
+		data = rect_id, rect, last
+		transmission = [self.msg(data, c, self.move_rect) for c in l]
+		self.server_sem.release()
+
+		print('Enviando retângulo',*rect_id,'\t',*rect)
+		self.reliable_send(*transmission)	
+
+
 
 	def join_request (self, id, client):	
 		print(client,'pediu para participar de',id)
 
 		self.server_sem.acquire()
 		self.server[id][-1].add(client)
-		self.server_sem.release()
+		
 
 			
 		# envio seguro de todas as formas atualmente no quadro
+		self.reliable_send(*[self.msg((r,) + self.server[id][0][r][:2], client, self.move_rect) for r in self.server[id][0]])
+		self.server_sem.release()
 
 	def find_request (self, known, client):
 		print(client,'quer conhecer mais quadros')
